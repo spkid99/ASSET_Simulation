@@ -7,9 +7,9 @@ import pandas as pd
 
 st.set_page_config(page_title="딸아이의 투자 시뮬레이션", layout="centered")
 
-# --- 1. 구글 시트 연결 ---
+# --- 1. 구글 시트 연결 (비밀 금고 사용) ---
 scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
-creds = Credentials.from_service_account_file('credentials.json', scopes=scopes)
+creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
 client = gspread.authorize(creds)
 spreadsheet = client.open("ASSET_Simulation")
 
