@@ -39,7 +39,6 @@ sheet_balance = spreadsheet.worksheet("잔고")
 sheet_history = spreadsheet.worksheet("투자내역")
 sheet_stocks = spreadsheet.worksheet("종목관리")
 
-# 새로 만든 시트들 연결
 try:
     sheet_shop = spreadsheet.worksheet("상점")
     sheet_purchases = spreadsheet.worksheet("구매내역")
@@ -89,7 +88,6 @@ for name, qty in portfolio.items():
         total_stock_value += (raw_price if is_korean else raw_price * exchange_rate) * qty
 
 total_asset = current_cash + current_deposit + total_stock_value
-# 💡 핵심 로직: 쓸 수 있는 돈은 총 자산에서 원금(100만 원)을 뺀 순수 수익금뿐입니다!
 available_profit = max(total_asset - initial_capital, 0)
 
 # --- 🖥️ 화면 구성 ---
@@ -114,27 +112,35 @@ st.subheader("🎁 판매 중인 상품 목록")
 if not shop_items:
     st.write("현재 상점에 등록된 상품이 없습니다. 구글 시트의 [상점] 탭에 상품을 추가해 주세요!")
 else:
-    # 상품을 2개씩 한 줄에 보여주기
     cols = st.columns(2)
     for idx, item in enumerate(shop_items):
-        icon = item.get('아이콘', '🎁')
+        # 💡 '아이콘' 대신 '이미지URL'을 가져오도록 변경
+        img_url = str(item.get('이미지URL', '')).strip()
         name = item.get('상품명', '이름 없음')
         price = float(item.get('가격', 0))
         desc = item.get('설명', '')
         
         with cols[idx % 2]:
             with st.container(border=True):
-                st.subheader(f"{icon} {name}")
+                # 💡 사진 띄우기 파트 (주소가 잘못되어 에러가 나더라도 앱이 멈추지 않게 방어)
+                if img_url:
+                    try:
+                        st.image(img_url, use_container_width=True)
+                    except:
+                        st.caption("🖼️ 이미지를 불러올 수 없는 링크입니다.")
+                else:
+                    st.caption("🖼️ 등록된 상품 이미지가 없습니다.")
+                
+                st.subheader(name)
                 st.write(f"**가격: {price:,.0f}원**")
                 st.caption(desc)
                 
-                if st.button(f"구매하기", key=f"buy_{idx}"):
+                if st.button(f"구매하기", key=f"buy_{idx}", use_container_width=True):
                     if available_profit < price:
                         st.error("❌ 쓸 수 있는 수익금이 부족해요! 투자를 더 해서 수익을 늘려보세요.")
                     elif current_cash < price:
                         st.error("❌ 수익은 충분하지만 지갑에 현금이 없어요! 은행에서 출금하거나 주식을 조금 팔아서 현금을 마련해 오세요.")
                     else:
-                        # 현금 차감 및 구매 내역 저장
                         sheet_balance.update_cell(user_row_idx, 2, current_cash - price)
                         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                         sheet_purchases.append_row([now, current_user, name, price])
