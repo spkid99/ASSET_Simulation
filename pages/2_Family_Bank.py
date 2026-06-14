@@ -1,7 +1,7 @@
 import streamlit as st
 import gspread
 from google.oauth2.service_account import Credentials
-from datetime import datetime, timedelta # 💡 날짜 계산을 위한 도구 추가
+from datetime import datetime, timedelta
 
 st.set_page_config(page_title="우리집 은행", layout="centered")
 
@@ -59,13 +59,20 @@ st.title("🏦 우리집 은행 (예금/출금)")
 ANNUAL_INTEREST_RATE = 0.035
 st.info(f"👤 **{current_user}**의 저축 통장 | 📈 **예금 금리: 연 {ANNUAL_INTEREST_RATE*100:.2f}%**")
 
-# 💡 아이들의 눈높이에 맞춘 정기예금 설명
+# 💡 내 지갑 현금과 예금 통장 잔액을 한눈에 보여주기
+col_cash, col_dep = st.columns(2)
+with col_cash:
+    st.metric(label="💰 내 지갑 (현금)", value=f"{current_cash:,.0f} 원")
+with col_dep:
+    st.metric(label="🏦 은행 통장 (예금)", value=f"{current_deposit:,.0f} 원")
+
+# 아이들을 위한 정기예금 설명
 with st.expander("💡 꼭 읽어보세요: 은행과의 새끼손가락 약속! (정기예금이란?)", expanded=True):
     st.write("""
     **'정기예금'**은 은행에 한 달(30일) 동안 돈을 꾹 참고 맡겨두기로 굳게 약속하는 거예요. 
     은행은 이 돈을 안전하게 보관해 주는 대신 **'이자'**라는 용돈을 더 많이 준답니다.
     
-    * ⚠️ **주의할 점:** 한 번 통장에 돈을 넣으면, 약속한 날짜(만기일)가 될 때까지는 **절대 돈을 뺄 수 없어요!** * 그러니 당장 주식을 사거나 써야 할 현금은 지갑에 남겨두고, 여유 돈만 저금하는 지혜가 필요해요.
+    * ⚠️ **주의할 점:** 한 번 통장에 돈을 넣으면, 약속한 날짜(만기일)가 될 때까지는 **절대 돈을 뺄 수 없어요!** 그러니 당장 주식을 사거나 써야 할 현금은 지갑에 남겨두고, 여유 돈만 저금하는 지혜가 필요해요.
     """)
 
 expected_yearly = current_deposit * ANNUAL_INTEREST_RATE
@@ -86,14 +93,12 @@ with bank_col1:
         deposit_amt = st.number_input("넣을 금액", min_value=0, max_value=int(current_cash), step=1000, key="dep_input")
         if st.button("현금을 예금에 넣기", use_container_width=True):
             if deposit_amt > 0 and current_cash >= deposit_amt:
-                # 현금 차감 및 예금 증가
                 sheet_balance.update_cell(user_row_idx, 2, current_cash - deposit_amt)
                 sheet_balance.update_cell(user_row_idx, 3, current_deposit + deposit_amt)
                 
-                # 💡 통장이 비어있다가 새로 저금하는 경우, 오늘부터 30일 뒤를 만기일로 설정!
                 if current_deposit == 0:
                     new_maturity = (datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d")
-                    sheet_balance.update_cell(user_row_idx, 5, new_maturity) # E열(5번째 칸)에 기록
+                    sheet_balance.update_cell(user_row_idx, 5, new_maturity)
                     st.success(f"✨ {deposit_amt:,}원 저금 완료! 만기일은 30일 뒤인 {new_maturity} 입니다.")
                 else:
                     st.success(f"✨ {deposit_amt:,}원 추가 저금 완료! (기존 만기일 유지)")
@@ -106,19 +111,16 @@ with bank_col2:
     with st.container(border=True):
         st.write("⬆️ **출금하기** (예금 ➡️ 현금)")
         
-        # 💡 만기일이 안 지났으면 강력한 경고창 띄우기
         if not can_withdraw and current_deposit > 0:
             st.warning(f"🔒 은행과의 약속! 만기일({maturity_str})까지 **{days_left}일** 남았습니다. 지금은 돈을 뺄 수 없어요!")
             
         withdraw_amt = st.number_input("뺄 금액", min_value=0, max_value=int(current_deposit), step=1000, key="with_input")
         
-        # 💡 만기일이 지나지 않았으면 버튼을 아예 누를 수 없게 잠금 (disabled=True)
         if st.button("예금에서 현금 빼기", use_container_width=True, disabled=not can_withdraw):
             if withdraw_amt > 0 and current_deposit >= withdraw_amt:
                 sheet_balance.update_cell(user_row_idx, 2, current_cash + withdraw_amt)
                 sheet_balance.update_cell(user_row_idx, 3, current_deposit - withdraw_amt)
                 
-                # 💡 만약 돈을 전부 다 뺐다면, 만기일 기록을 지워서 다음 저금 시 새로 시작하게 함
                 if withdraw_amt == current_deposit:
                     sheet_balance.update_cell(user_row_idx, 5, "")
                     
