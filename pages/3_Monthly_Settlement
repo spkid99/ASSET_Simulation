@@ -1,0 +1,32 @@
+import streamlit as st
+
+st.set_page_config(page_title="월말 결산", layout="centered")
+
+st.title("🏆 월말 결산 및 명예의 전당")
+st.write("매월 말, 우리 가족 중 최고의 투자자와 성실한 저축왕을 뽑는 공간입니다.")
+
+st.divider()
+
+st.subheader("🥇 이번 달의 칭찬 타이틀 후보 (예시)")
+
+col1, col2 = st.columns(2)
+
+with col1:
+    with st.container(border=True):
+        st.write("👑 **성실한 개미 상**")
+        st.caption("수익률과 상관없이 예금 통장에 가장 꾸준히 저축을 많이 한 사람에게 주는 상이에요!")
+        
+    with st.container(border=True):
+        st.write("🥚 **바구니 마스터 상**")
+        st.caption("다양한 카테고리(테크, 음식, 자동차)의 주식을 골고루 분산 투자한 똑똑한 자산가에게 주어져요.")
+
+with col2:
+    with st.container(border=True):
+        st.write("👑 **버핏의 인내심 상**")
+        st.caption("시장이 흔들려도 당황하지 않고 좋은 회사의 주식을 가장 오래 굳건히 보유한 사람을 위한 상입니다.")
+        
+    with st.container(border=True):
+        st.write("🦅 **매의 눈 상**")
+        st.caption("지난달 대비 자산 성장률이 가장 높게 점프한 최고의 성장가에게 수여합니다.")
+
+st.info("💡 다중 사용자 기능과 연동되어 매월 말 자동으로 랭킹과 상장이 수여되는 기능이 곧 추가될 예정입니다!")
