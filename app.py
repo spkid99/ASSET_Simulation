@@ -6,7 +6,7 @@ import pandas as pd
 
 st.set_page_config(page_title="우리 딸의 첫 투자", layout="centered")
 
-# --- 🚀 속도 최적화 캐시 (가격 불러오기 방어력 강화) ---
+# --- 🚀 속도 최적화 캐시 (주말/휴장일 완벽 방어) ---
 @st.cache_data(ttl=600)
 def get_exchange_rate():
     try: return float(yf.Ticker("USDKRW=X").fast_info['last_price'])
@@ -14,15 +14,18 @@ def get_exchange_rate():
 
 @st.cache_data(ttl=300)
 def get_price(ticker):
+    if not ticker: return 0.0
     try: 
         ticker_obj = yf.Ticker(ticker)
-        # 1. 1순위: 가장 빠른 실시간 가격 찾기
-        if 'last_price' in ticker_obj.fast_info:
-            return float(ticker_obj.fast_info['last_price'])
-        # 2. 2순위: 주말/휴장일이라 실시간 가격이 없으면 최근 5일 중 마지막 가격 가져오기
-        hist = ticker_obj.history(period="5d")
+        # 1. 주말 방어: 무조건 최근 7일 치 차트를 열어서 가장 마지막 날의 종가를 가져옵니다.
+        hist = ticker_obj.history(period="7d")
         if not hist.empty:
             return float(hist['Close'].iloc[-1])
+        
+        # 2. 만약 차트가 비어있다면 실시간 가격 찌르기
+        if 'last_price' in ticker_obj.fast_info:
+            return float(ticker_obj.fast_info['last_price'])
+            
         return 0.0
     except: 
         return 0.0
@@ -49,7 +52,7 @@ exchange_rate = get_exchange_rate()
 # 1. 티커(종목코드) 딕셔너리 만들기 (띄어쓰기 완벽 제거)
 ticker_map = {}
 for row in stock_data:
-    name = str(row.get('종목명', '')).strip()
+    name = str(row.get('종목명', '')).replace(" ", "") # 혹시 모를 띄어쓰기 아예 삭제!
     ticker = str(row.get('티커', '')).strip()
     ticker_map[name] = ticker
 
@@ -57,12 +60,14 @@ for row in stock_data:
 def get_owned_stocks():
     owned = {}
     for row in history_data:
-        name = str(row.get('종목명', '')).strip()
+        name = str(row.get('종목명', '')).replace(" ", "") # 여기서도 띄어쓰기 아예 삭제!
         kind = str(row.get('종류(매수/매도)', row.get('종류', ''))).strip()
         try: qty = float(row.get('수량', 0))
         except: qty = 0.0
+        
         if kind == '매수': owned[name] = owned.get(name, 0) + qty
         elif kind == '매도': owned[name] = owned.get(name, 0) - qty
+        
     return {k: round(v, 2) for k, v in owned.items() if round(v, 2) > 0}
 
 owned_stocks = get_owned_stocks()
@@ -89,6 +94,7 @@ for name, qty in owned_stocks.items():
     stock_value = current_price * qty
     total_stock_value += stock_value
     
+    # 표에 보여줄 때는 원래 이름을 위해 띄어쓰기 없는 버전으로 표시
     stock_portfolio.append({
         '종목명': name,
         '보유 수량(주)': qty,
