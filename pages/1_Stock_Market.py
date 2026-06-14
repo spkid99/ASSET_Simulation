@@ -4,10 +4,11 @@ from google.oauth2.service_account import Credentials
 import yfinance as yf
 from datetime import datetime
 import pandas as pd
+import plotly.graph_objects as go  # ✨ 화려한 캔들 차트를 위한 도구 추가
 
 st.set_page_config(page_title="주식 시장", layout="centered")
 
-# --- 속도 최적화 캐시 ---
+# --- 🚀 [속도 최적화 캐시] 차트 데이터 범위 확장 ---
 @st.cache_data(ttl=600)
 def get_exchange_rate():
     try: return float(yf.Ticker("USDKRW=X").fast_info['last_price'])
@@ -23,7 +24,8 @@ def get_chart(ticker):
     try:
         hist = yf.Ticker(ticker).history(period="3mo")
         if not hist.empty:
-            chart_data = hist[['Close']].copy()
+            # 📊 캔들 차트를 그리기 위해 Open, High, Low, Close 정보를 모두 가져옵니다.
+            chart_data = hist[['Open', 'High', 'Low', 'Close']].copy()
             chart_data.index = chart_data.index.tz_localize(None)
             return chart_data
     except: return None
@@ -91,10 +93,30 @@ if stock_data:
                     
                     sub_chart, sub_buy, sub_sell = st.tabs(["📈 차트", "🛒 매수", "💰 매도"])
                     
+                    # --- 📈 캔들 차트 구현 파트 ---
                     with sub_chart:
                         chart_data = get_chart(ticker_symbol)
-                        if chart_data is not None: st.line_chart(chart_data)
-                        else: st.info("최근 차트 데이터가 없습니다.")
+                        if chart_data is not None:
+                            # Plotly를 이용해 빨간/파란 봉 차트 그리기
+                            fig = go.Figure(data=[go.Candlestick(
+                                x=chart_data.index,
+                                open=chart_data['Open'],
+                                high=chart_data['High'],
+                                low=chart_data['Low'],
+                                close=chart_data['Close'],
+                                increasing_line_color='red',   # 상승은 빨간색 봉
+                                decreasing_line_color='blue'   # 하락은 파란색 봉
+                            )])
+                            
+                            # 차트 레이아웃 깔끔하게 다듬기
+                            fig.update_layout(
+                                xaxis_rangeslider_visible=False, # 하단 조절 바 숨겨서 깔끔하게
+                                margin=dict(l=10, r=10, t=10, b=10), # 여백 줄이기
+                                height=300 # 차트 높이 고정
+                            )
+                            st.plotly_chart(fig, use_container_width=True)
+                        else:
+                            st.info("최근 차트 데이터가 없습니다.")
                             
                     with sub_buy:
                         buy_qty = st.number_input(f"살 수량", min_value=0.01, step=0.01, format="%.2f", key=f"b_{ticker_symbol}")
@@ -123,7 +145,8 @@ if stock_data:
                                 st.success("매도 완료!")
                                 st.rerun()
                             else: st.error("수량을 확인하세요!")
-            except: st.error(f"{name} 데이터를 불러올 수 없습니다.")
+            except Exception as e: 
+                st.error(f"{name} 데이터를 불러올 수 없습니다.")
 else:
     st.warning("종목관리 시트에 기업을 추가해 주세요.")
 
