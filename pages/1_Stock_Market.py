@@ -22,9 +22,10 @@ def get_price(ticker):
 @st.cache_data(ttl=3600)
 def get_chart(ticker):
     try:
-        hist = yf.Ticker(ticker).history(period="3mo")
+        # 💡 기간을 1년(1y)으로 늘려서 과거 가격도 충분히 스크롤해서 볼 수 있게 합니다.
+        hist = yf.Ticker(ticker).history(period="1y")
         if not hist.empty:
-            chart_data = hist[['Open', 'High', 'Low', 'Close']].copy()
+            chart_data = hist[['Close']].copy()
             chart_data.index = chart_data.index.tz_localize(None)
             return chart_data
     except: return None
@@ -92,44 +93,28 @@ if stock_data:
                     
                     sub_chart, sub_buy, sub_sell = st.tabs(["📈 차트", "🛒 매수", "💰 매도"])
                     
-                    # --- ✨ 환골탈태한 진짜 주식 차트 파트 ---
                     with sub_chart:
                         chart_data = get_chart(ticker_symbol)
                         if chart_data is not None:
-                            # 1. 이동평균선(MA) 계산 (5일선, 20일선)
-                            chart_data['MA5'] = chart_data['Close'].rolling(window=5).mean()
-                            chart_data['MA20'] = chart_data['Close'].rolling(window=20).mean()
-
+                            # ✨ 다시 깔끔한 선 그래프로 변경
                             fig = go.Figure()
-
-                            # 2. 한국형 캔들 차트 (색상 꽉 채우기)
-                            fig.add_trace(go.Candlestick(
-                                x=chart_data.index,
-                                open=chart_data['Open'], high=chart_data['High'],
-                                low=chart_data['Low'], close=chart_data['Close'],
-                                increasing_line_color='#ff3333', decreasing_line_color='#0055ff', # 테두리 색상
-                                increasing_fillcolor='#ff3333', decreasing_fillcolor='#0055ff',   # 속 꽉 채우기
+                            fig.add_trace(go.Scatter(
+                                x=chart_data.index, 
+                                y=chart_data['Close'], 
+                                mode='lines',
+                                line=dict(color='#0055ff', width=2.5), # 파란색 굵고 깔끔한 선
+                                fill='tozeroy', # 선 아래를 연하게 색칠해서 트렌드를 돋보이게 함
+                                fillcolor='rgba(0, 85, 255, 0.1)',
                                 name='주가'
                             ))
 
-                            # 3. 이동평균선 추가
-                            fig.add_trace(go.Scatter(x=chart_data.index, y=chart_data['MA5'], line=dict(color='orange', width=1.5), name='5일선'))
-                            fig.add_trace(go.Scatter(x=chart_data.index, y=chart_data['MA20'], line=dict(color='purple', width=1.5), name='20일선'))
-
-                            # 4. 주말 공백 없애기 및 하얀 배경 디자인
-                            fig.update_xaxes(
-                                rangebreaks=[dict(bounds=["sat", "mon"])], # 토~일요일(주말) 숨기기
-                                showgrid=True, gridcolor='rgba(0,0,0,0.05)'
-                            )
-                            fig.update_yaxes(showgrid=True, gridcolor='rgba(0,0,0,0.05)')
-
                             fig.update_layout(
-                                xaxis_rangeslider_visible=False,
+                                xaxis_rangeslider_visible=True, # 💡 하단에 과거로 드래그할 수 있는 미니 스크롤바 추가!
                                 margin=dict(l=10, r=10, t=10, b=10),
                                 height=350,
-                                plot_bgcolor='white', # 배경을 하얗게
+                                plot_bgcolor='white',
                                 paper_bgcolor='white',
-                                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+                                hovermode="x unified" # 마우스를 올리면 날짜와 가격이 툴팁으로 깔끔하게 표시됨
                             )
                             st.plotly_chart(fig, use_container_width=True)
                         else:
