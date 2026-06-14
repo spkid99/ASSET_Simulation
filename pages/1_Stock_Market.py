@@ -22,7 +22,7 @@ def get_price(ticker):
 @st.cache_data(ttl=3600)
 def get_chart(ticker):
     try:
-        # 💡 기간을 1년(1y)으로 늘려서 과거 가격도 충분히 스크롤해서 볼 수 있게 합니다.
+        # 과거 1년치 데이터 불러오기
         hist = yf.Ticker(ticker).history(period="1y")
         if not hist.empty:
             chart_data = hist[['Close']].copy()
@@ -96,27 +96,27 @@ if stock_data:
                     with sub_chart:
                         chart_data = get_chart(ticker_symbol)
                         if chart_data is not None:
-                            # ✨ 다시 깔끔한 선 그래프로 변경
+                            # ✨ 다크 모드에 완벽하게 녹아드는 영롱한 파란색 선 그래프
                             fig = go.Figure()
                             fig.add_trace(go.Scatter(
                                 x=chart_data.index, 
                                 y=chart_data['Close'], 
                                 mode='lines',
-                                line=dict(color='#0055ff', width=2.5), # 파란색 굵고 깔끔한 선
-                                fill='tozeroy', # 선 아래를 연하게 색칠해서 트렌드를 돋보이게 함
-                                fillcolor='rgba(0, 85, 255, 0.1)',
+                                line=dict(color='#00C4FF', width=3), # 다크모드에서 빛나는 형광 파랑
+                                fill='tozeroy',
+                                fillcolor='rgba(0, 196, 255, 0.1)',
                                 name='주가'
                             ))
 
                             fig.update_layout(
-                                xaxis_rangeslider_visible=True, # 💡 하단에 과거로 드래그할 수 있는 미니 스크롤바 추가!
-                                margin=dict(l=10, r=10, t=10, b=10),
+                                xaxis_rangeslider_visible=False, # 뚱뚱한 스크롤바 삭제
+                                dragmode="pan", # 💡 마우스로 끌어서 이동할 수 있게 하는 마법!
+                                margin=dict(l=0, r=0, t=10, b=0),
                                 height=350,
-                                plot_bgcolor='white',
-                                paper_bgcolor='white',
-                                hovermode="x unified" # 마우스를 올리면 날짜와 가격이 툴팁으로 깔끔하게 표시됨
+                                hovermode="x unified"
                             )
-                            st.plotly_chart(fig, use_container_width=True)
+                            # theme="streamlit" 설정으로 앱의 배경색(다크/라이트)을 자동으로 따라가게 함
+                            st.plotly_chart(fig, use_container_width=True, theme="streamlit")
                         else:
                             st.info("최근 차트 데이터가 없습니다.")
                             
