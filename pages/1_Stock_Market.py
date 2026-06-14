@@ -37,12 +37,16 @@ def get_chart(ticker):
     except: return None
     return None
 
-# --- 🔌 구글 시트 연결 ---
-scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
-creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
-client = gspread.authorize(creds)
-spreadsheet = client.open("ASSET_Simulation")
+# --- 🔌 구글 시트 연결 (⚡ 과부하 방어력 추가!) ---
+# 구글 시트에 매번 로그인하지 않고, 한 번 연결하면 10분(600초) 동안 유지합니다.
+@st.cache_resource(ttl=600)
+def init_google_sheet():
+    scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
+    creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
+    client = gspread.authorize(creds)
+    return client.open("ASSET_Simulation")
 
+spreadsheet = init_google_sheet()
 sheet_balance = spreadsheet.worksheet("잔고")
 sheet_stocks = spreadsheet.worksheet("종목관리")
 sheet_history = spreadsheet.worksheet("투자내역")
@@ -58,13 +62,10 @@ current_cash = 0.0
 
 for idx, row in enumerate(balance_data):
     if str(row.get('사용자', '')).strip() == current_user:
-        # get_all_records는 헤더 다음인 2번째 줄부터 가져오므로, 
-        # 실제 시트 행 번호는 idx + 2가 됩니다.
         user_row_idx = idx + 2
         current_cash = float(row.get('현금잔액', 0))
         break
 
-# 혹시나 사용자를 못 찾았을 때를 위한 방어 코드
 if user_row_idx is None:
     st.error("사용자 정보를 찾을 수 없습니다. 홈 화면에서 다시 로그인해 주세요.")
     st.stop()
@@ -141,10 +142,8 @@ if stock_data:
                         
                         if st.button(f"'{name}' 매수하기", key=f"btn_b_{ticker_symbol}"):
                             if current_cash >= buy_cost:
-                                # 💡 고정된 'A2'가 아니라, 찾아낸 내 줄의 '현금잔액(2번째 열)'을 업데이트합니다!
                                 sheet_balance.update_cell(user_row_idx, 2, current_cash - buy_cost)
                                 now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                                # 💡 투자내역에 '누가' 샀는지 사용자 이름을 두 번째 칸에 넣어줍니다.
                                 sheet_history.append_row([now, current_user, name, "매수", buy_qty, current_price])
                                 st.success("🎉 매수 성공! 홈 화면에서 자산을 확인해 보세요.")
                                 st.rerun()
@@ -157,7 +156,6 @@ if stock_data:
                         
                         if st.button(f"'{name}' 매도하기", key=f"btn_s_{ticker_symbol}"):
                             if my_qty >= sell_qty and sell_qty > 0:
-                                # 💡 찾아낸 내 줄의 '현금잔액(2번째 열)'을 업데이트합니다!
                                 sheet_balance.update_cell(user_row_idx, 2, current_cash + sell_reward)
                                 now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                                 sheet_history.append_row([now, current_user, name, "매도", sell_qty, current_price])
