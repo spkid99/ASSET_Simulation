@@ -4,11 +4,11 @@ from google.oauth2.service_account import Credentials
 import yfinance as yf
 from datetime import datetime
 import pandas as pd
-import plotly.graph_objects as go  # ✨ 화려한 캔들 차트를 위한 도구 추가
+import plotly.graph_objects as go
 
 st.set_page_config(page_title="주식 시장", layout="centered")
 
-# --- 🚀 [속도 최적화 캐시] 차트 데이터 범위 확장 ---
+# --- 🚀 속도 최적화 캐시 ---
 @st.cache_data(ttl=600)
 def get_exchange_rate():
     try: return float(yf.Ticker("USDKRW=X").fast_info['last_price'])
@@ -24,7 +24,6 @@ def get_chart(ticker):
     try:
         hist = yf.Ticker(ticker).history(period="3mo")
         if not hist.empty:
-            # 📊 캔들 차트를 그리기 위해 Open, High, Low, Close 정보를 모두 가져옵니다.
             chart_data = hist[['Open', 'High', 'Low', 'Close']].copy()
             chart_data.index = chart_data.index.tz_localize(None)
             return chart_data
@@ -51,7 +50,7 @@ exchange_rate = get_exchange_rate()
 def get_owned_stocks():
     owned = {}
     for row in history_data:
-        name = str(row.get('종목명', '')).strip()
+        name = str(row.get('종목명', '')).replace(" ", "")
         kind = str(row.get('종류(매수/매도)', row.get('종류', ''))).strip()
         try: qty = float(row.get('수량', 0))
         except: qty = 0.0
@@ -85,7 +84,7 @@ if stock_data:
                 is_korean = ticker_symbol.endswith('.KS') or ticker_symbol.endswith('.KQ')
                 current_price = raw_price if is_korean else raw_price * exchange_rate
                 price_text = f"{current_price:,.0f}원" if is_korean else f"${raw_price:,.2f} (약 {current_price:,.0f}원)"
-                my_qty = owned_stocks.get(name, 0.0)
+                my_qty = owned_stocks.get(name.replace(" ", ""), 0.0)
 
                 with st.expander(f"📁 {name} ({ticker_symbol}) - {desc}"):
                     st.write(f"📊 **실시간 1주 가격:** {price_text}")
@@ -93,26 +92,44 @@ if stock_data:
                     
                     sub_chart, sub_buy, sub_sell = st.tabs(["📈 차트", "🛒 매수", "💰 매도"])
                     
-                    # --- 📈 캔들 차트 구현 파트 ---
+                    # --- ✨ 환골탈태한 진짜 주식 차트 파트 ---
                     with sub_chart:
                         chart_data = get_chart(ticker_symbol)
                         if chart_data is not None:
-                            # Plotly를 이용해 빨간/파란 봉 차트 그리기
-                            fig = go.Figure(data=[go.Candlestick(
+                            # 1. 이동평균선(MA) 계산 (5일선, 20일선)
+                            chart_data['MA5'] = chart_data['Close'].rolling(window=5).mean()
+                            chart_data['MA20'] = chart_data['Close'].rolling(window=20).mean()
+
+                            fig = go.Figure()
+
+                            # 2. 한국형 캔들 차트 (색상 꽉 채우기)
+                            fig.add_trace(go.Candlestick(
                                 x=chart_data.index,
-                                open=chart_data['Open'],
-                                high=chart_data['High'],
-                                low=chart_data['Low'],
-                                close=chart_data['Close'],
-                                increasing_line_color='red',   # 상승은 빨간색 봉
-                                decreasing_line_color='blue'   # 하락은 파란색 봉
-                            )])
-                            
-                            # 차트 레이아웃 깔끔하게 다듬기
+                                open=chart_data['Open'], high=chart_data['High'],
+                                low=chart_data['Low'], close=chart_data['Close'],
+                                increasing_line_color='#ff3333', decreasing_line_color='#0055ff', # 테두리 색상
+                                increasing_fillcolor='#ff3333', decreasing_fillcolor='#0055ff',   # 속 꽉 채우기
+                                name='주가'
+                            ))
+
+                            # 3. 이동평균선 추가
+                            fig.add_trace(go.Scatter(x=chart_data.index, y=chart_data['MA5'], line=dict(color='orange', width=1.5), name='5일선'))
+                            fig.add_trace(go.Scatter(x=chart_data.index, y=chart_data['MA20'], line=dict(color='purple', width=1.5), name='20일선'))
+
+                            # 4. 주말 공백 없애기 및 하얀 배경 디자인
+                            fig.update_xaxes(
+                                rangebreaks=[dict(bounds=["sat", "mon"])], # 토~일요일(주말) 숨기기
+                                showgrid=True, gridcolor='rgba(0,0,0,0.05)'
+                            )
+                            fig.update_yaxes(showgrid=True, gridcolor='rgba(0,0,0,0.05)')
+
                             fig.update_layout(
-                                xaxis_rangeslider_visible=False, # 하단 조절 바 숨겨서 깔끔하게
-                                margin=dict(l=10, r=10, t=10, b=10), # 여백 줄이기
-                                height=300 # 차트 높이 고정
+                                xaxis_rangeslider_visible=False,
+                                margin=dict(l=10, r=10, t=10, b=10),
+                                height=350,
+                                plot_bgcolor='white', # 배경을 하얗게
+                                paper_bgcolor='white',
+                                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
                             )
                             st.plotly_chart(fig, use_container_width=True)
                         else:
