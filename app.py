@@ -18,18 +18,21 @@ def get_price(ticker):
     if not ticker: return 0.0
     try: 
         ticker_obj = yf.Ticker(ticker)
+        if 'last_price' in ticker_obj.fast_info: return float(ticker_obj.fast_info['last_price'])
         hist = ticker_obj.history(period="7d")
         if not hist.empty: return float(hist['Close'].iloc[-1])
-        if 'last_price' in ticker_obj.fast_info: return float(ticker_obj.fast_info['last_price'])
         return 0.0
     except: return 0.0
 
-# --- 🔌 구글 시트 연결 ---
-scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
-creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
-client = gspread.authorize(creds)
-spreadsheet = client.open("ASSET_Simulation")
+# --- 🔌 구글 시트 연결 (과부하 방지 철통 방어막 적용!) ---
+@st.cache_resource(ttl=600)
+def init_connection():
+    scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
+    creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
+    client = gspread.authorize(creds)
+    return client.open("ASSET_Simulation")
 
+spreadsheet = init_connection()
 sheet_balance = spreadsheet.worksheet("잔고")
 sheet_history = spreadsheet.worksheet("투자내역")
 sheet_stocks = spreadsheet.worksheet("종목관리")
@@ -39,10 +42,9 @@ history_data = sheet_history.get_all_records()
 stock_data = sheet_stocks.get_all_records()
 exchange_rate = get_exchange_rate()
 
-# 등록된 유저 목록 추출
 existing_users = [str(row.get('사용자', '')).strip() for row in balance_data if row.get('사용자', '')]
 
-# --- 🔐 로그인 / 회원 등록 게이트 시스템 ---
+# --- 🔐 로그인 / 회원 등록 시스템 ---
 if "user_id" not in st.session_state:
     st.session_state.user_id = None
 
@@ -57,37 +59,30 @@ if not st.session_state.user_id:
             user_input = st.text_input("👤 본인의 이름 입력").strip()
             submitted = st.form_submit_button("금고 열기 🗝️")
             if submitted:
-                if not user_input:
-                    st.error("이름을 입력해 주세요!")
+                if not user_input: st.error("이름을 입력해 주세요!")
                 elif user_input in existing_users:
                     st.session_state.user_id = user_input
                     st.rerun()
-                else:
-                    st.error("❌ 등록되지 않은 사용자입니다. 이름을 정확히 입력하시거나 '신규 유저 등록'을 먼저 진행해 주세요!")
+                else: st.error("❌ 등록되지 않은 사용자입니다.")
                     
     elif menu == "📝 신규 유저 등록":
         with st.form("register_form"):
             new_user_input = st.text_input("👤 새 유저 이름 입력 (중복 불가)").strip()
             submitted = st.form_submit_button("새 금고 만들기 🔨")
             if submitted:
-                if not new_user_input:
-                    st.error("등록할 이름을 입력해 주세요!")
-                elif new_user_input in existing_users:
-                    st.error("❌ 이미 존재하는 이름입니다! 다른 이름이나 별명을 사용해 주세요.")
+                if not new_user_input: st.error("등록할 이름을 입력해 주세요!")
+                elif new_user_input in existing_users: st.error("❌ 이미 존재하는 이름입니다!")
                 else:
-                    # 신규 등록 (사용자, 현금, 예금, 초기자본, 만기일, 초기화일)
                     sheet_balance.append_row([new_user_input, 1000000, 0, 1000000, "", ""])
                     st.session_state.user_id = new_user_input
-                    st.success(f"🎉 {new_user_input}님의 첫 금고가 성공적으로 개설되었습니다! 초기 자본 100만 원이 지급되었습니다.")
+                    st.success(f"🎉 {new_user_input}님의 첫 금고 개설 완료!")
                     st.rerun()
     st.stop()
 
 current_user = st.session_state.user_id
 
-# --- 📊 로그인 성공 후 자산 데이터 가공 ---
-current_cash = 0.0
-current_deposit = 0.0
-initial_capital = 1000000.0
+# --- 📊 자산 데이터 가공 ---
+current_cash, current_deposit, initial_capital = 0.0, 0.0, 1000000.0
 for row in balance_data:
     if str(row.get('사용자', '')).strip() == current_user:
         current_cash = float(row.get('현금잔액', 0))
@@ -103,13 +98,10 @@ def get_user_portfolio():
         if str(row.get('사용자', '')).strip() != current_user: continue
         name = str(row.get('종목명', '')).replace(" ", "")
         kind = str(row.get('종류', row.get('종류(매수/매도)', ''))).strip()
-        try:
-            qty = float(row.get('수량', 0))
-            price = float(row.get('가격', 0))
+        try: qty, price = float(row.get('수량', 0)), float(row.get('가격', 0))
         except: continue
         
-        if name not in portfolio:
-            portfolio[name] = {'qty': 0.0, 'total_buy_cost': 0.0}
+        if name not in portfolio: portfolio[name] = {'qty': 0.0, 'total_buy_cost': 0.0}
         if kind == '매수':
             portfolio[name]['qty'] += qty
             portfolio[name]['total_buy_cost'] += qty * price
@@ -138,7 +130,6 @@ for name, data in user_portfolio.items():
     total_buy_cost = data['total_buy_cost']
     stock_value = current_price * qty
     total_stock_value += stock_value
-    
     profit_amt = stock_value - total_buy_cost
     profit_rate = (profit_amt / total_buy_cost * 100) if total_buy_cost > 0 else 0
     
@@ -154,27 +145,18 @@ today_str = datetime.now().strftime("%Y년 %m월 %d일 기준")
 
 # --- 🖥️ 대시보드 UI ---
 col_title, col_logout = st.columns([4, 1])
-with col_title:
-    st.title(f"🏢 {current_user}의 자산관리 시뮬레이션")
+with col_title: st.title(f"🏢 {current_user}의 자산관리")
 with col_logout:
     st.write("")
     if st.button("로그아웃 🚪", use_container_width=True):
         st.session_state.user_id = None
         st.rerun()
 
-with st.expander("💡 꼭 알아야 할 자산관리 기초 (클릭해서 읽어보세요!)"):
-    st.write("""
-    우리가 관리할 수 있는 자산(재산)은 크게 3가지로 나눌 수 있어요. 이 세 가지를 어떻게 나누어 담느냐가 투자의 핵심입니다!
-    * 💵 **현금 (Cash):** 지금 내 지갑이나 자유로운 통장에 있는 돈이에요. 당장 아이스크림을 사 먹을 땐 편하지만, 가만히 두면 돈이 스스로 늘어나지는 않아요.
-    * 🏛️ **예금 (Deposit):** 당장 쓰지 않을 돈을 은행에 안전하게 맡겨두는 거예요. 은행이 내 돈을 보관해 주는 대신 **'이자'**라는 보너스를 조금씩 줍니다. 원금이 줄어들 걱정이 없는 가장 안전한 방법이에요.
-    * 📈 **주식 (Stock):** 멋진 회사의 주인이 되는 티켓을 사는 거예요. 회사가 돈을 아주 많이 벌면 내 티켓의 가치도 쑥쑥 올라 큰 수익을 얻을 수 있지만, 회사가 어려워지면 내 돈도 줄어들 수 있는 진짜 **'투자'**랍니다.
-    """)
-
 st.divider()
 st.subheader("💎 나의 총 자산")
 st.caption(f"🗓️ {today_str}")
 st.metric(
-    label=f"💰 시작 원금(초기 자본금): {initial_capital:,.0f} 원", 
+    label=f"💰 시작 원금: {initial_capital:,.0f} 원", 
     value=f"{total_asset_value:,.0f} 원",
     delta=f"총 {total_profit_amt:,.0f} 원 ({total_profit_rate:,.2f}%) 수익"
 )
@@ -200,14 +182,16 @@ st.write("💼 **상세 주식 보유 내역**")
 if stock_details:
     df_owned = pd.DataFrame(stock_details)
     try:
-        def color_profit(val):
-            return f"color: {'red' if val > 0 else 'blue' if val < 0 else 'black'}"
+        def color_profit(val): return f"color: {'red' if val > 0 else 'blue' if val < 0 else 'black'}"
         formatted_df = df_owned.style.format({
             '총 매수금액': '{:,.0f}', '현재 총 가치': '{:,.0f}', '수익금액': '{:,.0f}', '수익률(%)': '{:,.2f}%'
         }).applymap(color_profit, subset=['수익률(%)', '수익금액'])
         st.dataframe(formatted_df, hide_index=True, use_container_width=True)
     except:
         st.dataframe(df_owned, hide_index=True, use_container_width=True)
+    
+    if price_error_flag:
+        st.error("⚠️ 일부 주식 가격을 불러오지 못했습니다. 아래 새로고침 버튼을 눌러주세요!")
 else:
     st.info("아직 보유한 주식이 없어요. 왼쪽 메뉴에서 첫 투자를 시작해 보세요!")
 
