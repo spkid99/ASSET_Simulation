@@ -29,10 +29,14 @@ def get_price(ticker):
     except: return 0.0
 
 # --- 🔌 구글 시트 연결 ---
-scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
-creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
-client = gspread.authorize(creds)
-spreadsheet = client.open("ASSET_Simulation")
+@st.cache_resource(ttl=600)
+def init_connection():
+    scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
+    creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
+    client = gspread.authorize(creds)
+    return client.open("ASSET_Simulation")
+
+spreadsheet = init_connection()
 
 sheet_balance = spreadsheet.worksheet("잔고")
 balance_data = sheet_balance.get_all_records()
