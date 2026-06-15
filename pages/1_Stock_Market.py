@@ -101,6 +101,7 @@ if stock_data:
             name = str(stock.get('종목명', '')).strip()
             desc = str(stock.get('설명', '')).strip()
             news_text = str(stock.get('최근뉴스', '')).strip() # 💡 종목별 뉴스 가져오기
+            news_eval = str(stock.get('뉴스평가', '')).strip()
             
             try:
                 raw_price = get_price(ticker_symbol)
@@ -112,9 +113,14 @@ if stock_data:
                 my_qty = owned_stocks.get(name.replace(" ", ""), 0.0)
 
                 with st.expander(f"📦 {name} ({ticker_symbol}) - {desc}"):
-                    # 💡 뉴스가 기록되어 있다면, 가장 상단에 눈에 띄게 노출
+                    # 💡 평가에 맞춰 아이콘 지정 및 노출
                     if news_text:
-                        st.success(f"📰 **최근 뉴스:** {news_text}")
+                        if news_eval == '호재': news_icon = "🔴"
+                        elif news_eval == '악재': news_icon = "🔵"
+                        elif news_eval == '중립': news_icon = "🟡"
+                        else: news_icon = "📰"
+                        
+                        st.success(f"{news_icon} **최근 뉴스:** {news_text}")
                         
                     st.write(f"📊 **실시간 1주 가격:** {price_text}")
                     st.write(f"💎 **내가 가진 수량:** {my_qty}주")
