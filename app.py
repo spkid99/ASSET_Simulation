@@ -207,25 +207,38 @@ st.write("💼 **상세 주식 보유 내역**")
 if stock_details:
     df_owned = pd.DataFrame(stock_details)
     try:
-        def color_profit(val): 
-            if pd.isna(val): return ""
-            return f"color: {'red' if val > 0 else 'blue' if val < 0 else 'black'}"
-            
-        # 💡 천 단위 콤마(,) 포맷팅 확실하게 적용!
-        formatted_df = df_owned.style.format({
+        # 💡 다크모드에서도 눈에 확 띄는 밝은 빨강/파랑으로 색상 조정
+        def color_profit(val):
+            try:
+                v = float(val)
+                if v > 0: return "color: #ff4b4b;" # 수익 (빨강)
+                elif v < 0: return "color: #0083ff;" # 손실 (파랑)
+                else: return ""
+            except: return ""
+
+        styled_df = df_owned.style.format({
             '총 매수금액(원)': '{:,.0f}', 
             '현재 총 가치(원)': '{:,.0f}', 
             '수익금액(원)': '{:,.0f}', 
             '수익률(%)': '{:,.2f}%'
-        }).applymap(color_profit, subset=['수익률(%)', '수익금액(원)'])
+        })
         
-        st.dataframe(formatted_df, hide_index=True, use_container_width=True)
-    except:
-        # 💡 에러가 발생해도 콤마가 무조건 찍히도록 이중 방어막 추가!
-        df_owned['총 매수금액(원)'] = df_owned['총 매수금액(원)'].apply(lambda x: f"{x:,.0f}")
-        df_owned['현재 총 가치(원)'] = df_owned['현재 총 가치(원)'].apply(lambda x: f"{x:,.0f}")
-        df_owned['수익금액(원)'] = df_owned['수익금액(원)'].apply(lambda x: f"{x:,.0f}")
-        st.dataframe(df_owned, hide_index=True, use_container_width=True)
+        # 💡 최신 파이썬 버전(map)과 구 버전(applymap)의 충돌을 완벽히 해결!
+        if hasattr(styled_df, 'map'):
+            styled_df = styled_df.map(color_profit, subset=['수익률(%)', '수익금액(원)'])
+        else:
+            styled_df = styled_df.applymap(color_profit, subset=['수익률(%)', '수익금액(원)'])
+            
+        st.dataframe(styled_df, hide_index=True, use_container_width=True)
+        
+    except Exception as e:
+        # 💡 만약 색칠에 실패하더라도 콤마와 % 기호는 무조건 나오도록 철통 방어!
+        df_safe = df_owned.copy()
+        df_safe['총 매수금액(원)'] = df_safe['총 매수금액(원)'].apply(lambda x: f"{x:,.0f}")
+        df_safe['현재 총 가치(원)'] = df_safe['현재 총 가치(원)'].apply(lambda x: f"{x:,.0f}")
+        df_safe['수익금액(원)'] = df_safe['수익금액(원)'].apply(lambda x: f"{x:,.0f}")
+        df_safe['수익률(%)'] = df_safe['수익률(%)'].apply(lambda x: f"{x:,.2f}%")
+        st.dataframe(df_safe, hide_index=True, use_container_width=True)
     
     if price_error_flag:
         st.error("⚠️ 일부 주식 가격을 불러오지 못했습니다. 아래 새로고침 버튼을 눌러주세요!")
