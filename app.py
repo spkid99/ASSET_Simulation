@@ -129,10 +129,10 @@ for name, data in user_portfolio.items():
     qty = data['qty']
     total_buy_cost = data['total_buy_cost']
     stock_value = current_price * qty
-    total_stock_value += stock_value
     profit_amt = stock_value - total_buy_cost
     profit_rate = (profit_amt / total_buy_cost * 100) if total_buy_cost > 0 else 0
     
+    # 💡 컬럼명에 단위를 명확하게 추가!
     stock_details.append({
         '종목명': name, 
         '보유 수량(주)': qty, 
@@ -158,21 +158,18 @@ with col_logout:
 
 st.divider()
 
-# 💡 핫한 뉴스 노출 영역 추가
+# 핫한 뉴스 노출 영역
 hot_news = []
 for stock in stock_data:
     is_hot = str(stock.get('핫한뉴스선정', '')).strip().upper()
     news_text = str(stock.get('최근뉴스', '')).strip()
-    news_eval = str(stock.get('뉴스평가', '')).strip() # 평가 가져오기
+    news_eval = str(stock.get('뉴스평가', '')).strip()
     name = str(stock.get('종목명', '')).strip()
-    
     if is_hot in ['O', '0', 'V', 'TRUE', 'Y'] and news_text:
-        # 평가에 맞춰 색깔 이모티콘 달아주기
         if news_eval == '호재': icon = "🔴"
         elif news_eval == '악재': icon = "🔵"
         elif news_eval == '중립': icon = "🟡"
         else: icon = "📰"
-        
         hot_news.append((name, news_text, icon))
 
 if hot_news:
@@ -210,12 +207,24 @@ st.write("💼 **상세 주식 보유 내역**")
 if stock_details:
     df_owned = pd.DataFrame(stock_details)
     try:
-        def color_profit(val): return f"color: {'red' if val > 0 else 'blue' if val < 0 else 'black'}"
+        def color_profit(val): 
+            if pd.isna(val): return ""
+            return f"color: {'red' if val > 0 else 'blue' if val < 0 else 'black'}"
+            
+        # 💡 천 단위 콤마(,) 포맷팅 확실하게 적용!
         formatted_df = df_owned.style.format({
-            '총 매수금액': '{:,.0f}', '현재 총 가치': '{:,.0f}', '수익금액': '{:,.0f}', '수익률(%)': '{:,.2f}%'
-        }).applymap(color_profit, subset=['수익률(%)', '수익금액'])
+            '총 매수금액(원)': '{:,.0f}', 
+            '현재 총 가치(원)': '{:,.0f}', 
+            '수익금액(원)': '{:,.0f}', 
+            '수익률(%)': '{:,.2f}%'
+        }).applymap(color_profit, subset=['수익률(%)', '수익금액(원)'])
+        
         st.dataframe(formatted_df, hide_index=True, use_container_width=True)
     except:
+        # 💡 에러가 발생해도 콤마가 무조건 찍히도록 이중 방어막 추가!
+        df_owned['총 매수금액(원)'] = df_owned['총 매수금액(원)'].apply(lambda x: f"{x:,.0f}")
+        df_owned['현재 총 가치(원)'] = df_owned['현재 총 가치(원)'].apply(lambda x: f"{x:,.0f}")
+        df_owned['수익금액(원)'] = df_owned['수익금액(원)'].apply(lambda x: f"{x:,.0f}")
         st.dataframe(df_owned, hide_index=True, use_container_width=True)
     
     if price_error_flag:
