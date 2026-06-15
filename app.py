@@ -24,7 +24,7 @@ def get_price(ticker):
         return 0.0
     except: return 0.0
 
-# --- 🔌 구글 시트 연결 (과부하 방지 철통 방어막 적용!) ---
+# --- 🔌 구글 시트 연결 ---
 @st.cache_resource(ttl=600)
 def init_connection():
     scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
@@ -153,6 +153,22 @@ with col_logout:
         st.rerun()
 
 st.divider()
+
+# 💡 핫한 뉴스 노출 영역 추가
+hot_news = []
+for stock in stock_data:
+    is_hot = str(stock.get('핫한뉴스선정', '')).strip().upper()
+    news_text = str(stock.get('최근뉴스', '')).strip()
+    name = str(stock.get('종목명', '')).strip()
+    if is_hot in ['O', '0', 'V', 'TRUE', 'Y'] and news_text:
+        hot_news.append((name, news_text))
+
+if hot_news:
+    st.subheader("🔥 오늘의 주식 시장 핫이슈")
+    for name, news in hot_news[:5]: # 최대 5개까지만 노출
+        st.info(f"**[{name}]** {news}")
+    st.divider()
+
 st.subheader("💎 나의 총 자산")
 st.caption(f"🗓️ {today_str}")
 st.metric(
