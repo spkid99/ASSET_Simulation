@@ -14,10 +14,14 @@ if pwd != "0000":
 st.success("🔓 마스터 계정 로그인 성공!")
 
 # --- 🔌 구글 시트 연결 ---
-scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
-creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
-client = gspread.authorize(creds)
-spreadsheet = client.open("ASSET_Simulation")
+@st.cache_resource(ttl=600)
+def init_connection():
+    scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
+    creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
+    client = gspread.authorize(creds)
+    return client.open("ASSET_Simulation")
+
+spreadsheet = init_connection()
 
 sheet_balance = spreadsheet.worksheet("잔고")
 sheet_history = spreadsheet.worksheet("투자내역")
