@@ -23,28 +23,37 @@ def get_price(ticker):
     if not ticker: return 0.0
     try: 
         ticker_obj = yf.Ticker(ticker)
+        if 'last_price' in ticker_obj.fast_info: return float(ticker_obj.fast_info['last_price'])
         hist = ticker_obj.history(period="7d")
         if not hist.empty: return float(hist['Close'].iloc[-1])
         return 0.0
     except: return 0.0
 
-# --- 🔌 구글 시트 연결 ---
-scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
-creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
-client = gspread.authorize(creds)
-spreadsheet = client.open("ASSET_Simulation")
+# --- 🔌 구글 시트 연결 (과부하 방지 철통 방어막 적용!) ---
+@st.cache_resource(ttl=600)
+def init_connection():
+    scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
+    creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
+    client = gspread.authorize(creds)
+    return client.open("ASSET_Simulation")
 
+spreadsheet = init_connection()
 sheet_balance = spreadsheet.worksheet("잔고")
 sheet_history = spreadsheet.worksheet("투자내역")
 sheet_stocks = spreadsheet.worksheet("종목관리")
-sheet_shop = spreadsheet.worksheet("상점")
-sheet_purchases = spreadsheet.worksheet("구매내역")
+
+try:
+    sheet_shop = spreadsheet.worksheet("상점")
+    sheet_purchases = spreadsheet.worksheet("구매내역")
+except:
+    st.error("구글 시트에 [상점] 탭과 [구매내역] 탭을 먼저 만들어주세요!")
+    st.stop()
 
 balance_data = sheet_balance.get_all_records()
 history_data = sheet_history.get_all_records()
 stock_data = sheet_stocks.get_all_records()
 shop_items = sheet_shop.get_all_records()
-purchase_values = sheet_purchases.get_all_values() # 행 인덱스 추적용
+purchase_values = sheet_purchases.get_all_values()
 exchange_rate = get_exchange_rate()
 ticker_map = {str(r.get('종목명', '')).replace(" ", ""): str(r.get('티커', '')).strip() for r in stock_data}
 
@@ -121,11 +130,10 @@ with tab_shop:
                     
                     if st.button(f"구매하기", key=f"buy_{idx}", use_container_width=True):
                         if available_profit < price: st.error("❌ 쓸 수 있는 수익금이 부족해요!")
-                        elif current_cash < price: st.error("❌ 지갑에 실물 현금이 부족합니다. 주식을 일부 매도해 주세요.")
+                        elif current_cash < price: st.error("❌ 지갑에 실물 현금이 부족합니다.")
                         else:
                             sheet_balance.update_cell(user_row_idx, 2, current_cash - price)
                             now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                            # 상태 칸에 '사용전' 기입
                             sheet_purchases.append_row([now_str, current_user, name, price, "사용전"])
                             st.success(f"🎉 {name} 구매 완료! '내 쿠폰지갑'으로 전송되었습니다.")
                             st.rerun()
