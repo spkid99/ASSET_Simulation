@@ -159,14 +159,22 @@ hot_news = []
 for stock in stock_data:
     is_hot = str(stock.get('핫한뉴스선정', '')).strip().upper()
     news_text = str(stock.get('최근뉴스', '')).strip()
+    news_eval = str(stock.get('뉴스평가', '')).strip() # 평가 가져오기
     name = str(stock.get('종목명', '')).strip()
+    
     if is_hot in ['O', '0', 'V', 'TRUE', 'Y'] and news_text:
-        hot_news.append((name, news_text))
+        # 평가에 맞춰 색깔 이모티콘 달아주기
+        if news_eval == '호재': icon = "🔴"
+        elif news_eval == '악재': icon = "🔵"
+        elif news_eval == '중립': icon = "🟡"
+        else: icon = "📰"
+        
+        hot_news.append((name, news_text, icon))
 
 if hot_news:
     st.subheader("🔥 오늘의 주식 시장 핫이슈")
-    for name, news in hot_news[:5]: # 최대 5개까지만 노출
-        st.info(f"**[{name}]** {news}")
+    for name, news, icon in hot_news[:5]:
+        st.info(f"**[{name}]** {icon} {news}")
     st.divider()
 
 st.subheader("💎 나의 총 자산")
