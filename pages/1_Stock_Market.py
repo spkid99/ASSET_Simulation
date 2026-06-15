@@ -37,16 +37,15 @@ def get_chart(ticker):
     except: return None
     return None
 
-# --- 🔌 구글 시트 연결 (⚡ 과부하 방어력 추가!) ---
-# 구글 시트에 매번 로그인하지 않고, 한 번 연결하면 10분(600초) 동안 유지합니다.
+# --- 🔌 구글 시트 연결 ---
 @st.cache_resource(ttl=600)
-def init_google_sheet():
+def init_connection():
     scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
     creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
     client = gspread.authorize(creds)
     return client.open("ASSET_Simulation")
 
-spreadsheet = init_google_sheet()
+spreadsheet = init_connection()
 sheet_balance = spreadsheet.worksheet("잔고")
 sheet_stocks = spreadsheet.worksheet("종목관리")
 sheet_history = spreadsheet.worksheet("투자내역")
@@ -56,7 +55,7 @@ stock_data = sheet_stocks.get_all_records()
 history_data = sheet_history.get_all_records()
 exchange_rate = get_exchange_rate()
 
-# --- 🔍 현재 로그인한 사용자의 줄(Row) 위치와 현금 찾기 ---
+# --- 🔍 내 자산 찾기 ---
 user_row_idx = None
 current_cash = 0.0
 
@@ -67,14 +66,13 @@ for idx, row in enumerate(balance_data):
         break
 
 if user_row_idx is None:
-    st.error("사용자 정보를 찾을 수 없습니다. 홈 화면에서 다시 로그인해 주세요.")
+    st.error("사용자 정보를 찾을 수 없습니다.")
     st.stop()
 
-# --- 📊 내 보유 주식만 계산 ---
 def get_owned_stocks():
     owned = {}
     for row in history_data:
-        if str(row.get('사용자', '')).strip() != current_user: continue # 내 것만!
+        if str(row.get('사용자', '')).strip() != current_user: continue
         name = str(row.get('종목명', '')).replace(" ", "")
         kind = str(row.get('종류', row.get('종류(매수/매도)', ''))).strip()
         try: qty = float(row.get('수량', 0))
@@ -102,6 +100,7 @@ if stock_data:
             ticker_symbol = str(stock.get('티커', '')).strip()
             name = str(stock.get('종목명', '')).strip()
             desc = str(stock.get('설명', '')).strip()
+            news_text = str(stock.get('최근뉴스', '')).strip() # 💡 종목별 뉴스 가져오기
             
             try:
                 raw_price = get_price(ticker_symbol)
@@ -113,6 +112,10 @@ if stock_data:
                 my_qty = owned_stocks.get(name.replace(" ", ""), 0.0)
 
                 with st.expander(f"📦 {name} ({ticker_symbol}) - {desc}"):
+                    # 💡 뉴스가 기록되어 있다면, 가장 상단에 눈에 띄게 노출
+                    if news_text:
+                        st.success(f"📰 **최근 뉴스:** {news_text}")
+                        
                     st.write(f"📊 **실시간 1주 가격:** {price_text}")
                     st.write(f"💎 **내가 가진 수량:** {my_qty}주")
                     
