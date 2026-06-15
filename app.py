@@ -113,7 +113,7 @@ def get_user_portfolio():
 
 user_portfolio = get_user_portfolio()
 stock_details = []
-total_stock_value = 0.0
+total_stock_value = 0.0 # 주식 총 가치 변수 초기화
 price_error_flag = False
 
 for name, data in user_portfolio.items():
@@ -129,10 +129,13 @@ for name, data in user_portfolio.items():
     qty = data['qty']
     total_buy_cost = data['total_buy_cost']
     stock_value = current_price * qty
+    
+    # 💡 누락되었던 자산 총합 계산식 추가 완료!
+    total_stock_value += stock_value 
+    
     profit_amt = stock_value - total_buy_cost
     profit_rate = (profit_amt / total_buy_cost * 100) if total_buy_cost > 0 else 0
     
-    # 💡 컬럼명에 단위를 명확하게 추가!
     stock_details.append({
         '종목명': name, 
         '보유 수량(주)': qty, 
@@ -207,15 +210,10 @@ st.write("💼 **상세 주식 보유 내역**")
 if stock_details:
     df_owned = pd.DataFrame(stock_details)
     try:
-        # 💡 다크모드에서도 눈에 확 띄는 밝은 빨강/파랑으로 색상 조정
-        def color_profit(val):
-            try:
-                v = float(val)
-                if v > 0: return "color: #ff4b4b;" # 수익 (빨강)
-                elif v < 0: return "color: #0083ff;" # 손실 (파랑)
-                else: return ""
-            except: return ""
-
+        def color_profit(val): 
+            if pd.isna(val): return ""
+            return f"color: {'red' if val > 0 else 'blue' if val < 0 else 'black'}"
+            
         styled_df = df_owned.style.format({
             '총 매수금액(원)': '{:,.0f}', 
             '현재 총 가치(원)': '{:,.0f}', 
@@ -223,16 +221,13 @@ if stock_details:
             '수익률(%)': '{:,.2f}%'
         })
         
-        # 💡 최신 파이썬 버전(map)과 구 버전(applymap)의 충돌을 완벽히 해결!
         if hasattr(styled_df, 'map'):
             styled_df = styled_df.map(color_profit, subset=['수익률(%)', '수익금액(원)'])
         else:
             styled_df = styled_df.applymap(color_profit, subset=['수익률(%)', '수익금액(원)'])
             
         st.dataframe(styled_df, hide_index=True, use_container_width=True)
-        
-    except Exception as e:
-        # 💡 만약 색칠에 실패하더라도 콤마와 % 기호는 무조건 나오도록 철통 방어!
+    except:
         df_safe = df_owned.copy()
         df_safe['총 매수금액(원)'] = df_safe['총 매수금액(원)'].apply(lambda x: f"{x:,.0f}")
         df_safe['현재 총 가치(원)'] = df_safe['현재 총 가치(원)'].apply(lambda x: f"{x:,.0f}")
@@ -244,8 +239,3 @@ if stock_details:
         st.error("⚠️ 일부 주식 가격을 불러오지 못했습니다. 아래 새로고침 버튼을 눌러주세요!")
 else:
     st.info("아직 보유한 주식이 없어요. 왼쪽 메뉴에서 첫 투자를 시작해 보세요!")
-
-st.divider()
-if st.button("🔄 실시간 주식 가격 새로고침", use_container_width=True):
-    st.cache_data.clear()
-    st.rerun()
