@@ -134,8 +134,12 @@ for name, data in user_portfolio.items():
     profit_rate = (profit_amt / total_buy_cost * 100) if total_buy_cost > 0 else 0
     
     stock_details.append({
-        '종목명': name, '보유 수량': qty, '총 매수금액': round(total_buy_cost),
-        '현재 총 가치': round(stock_value), '수익률(%)': round(profit_rate, 2), '수익금액': round(profit_amt)
+        '종목명': name, 
+        '보유 수량(주)': qty, 
+        '총 매수금액(원)': round(total_buy_cost),
+        '현재 총 가치(원)': round(stock_value), 
+        '수익률(%)': round(profit_rate, 2), 
+        '수익금액(원)': round(profit_amt)
     })
 
 total_asset_value = current_cash + current_deposit + total_stock_value
