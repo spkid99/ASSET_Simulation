@@ -8,14 +8,13 @@ import plotly.graph_objects as go
 
 st.set_page_config(page_title="주식 시장", layout="centered")
 
-# --- 👤 로그인 확인 시스템 ---
 if "user_id" not in st.session_state or not st.session_state.user_id:
     st.warning("👤 먼저 메인 홈 화면(app.py)에서 이름을 입력하고 로그인해 주세요!")
     st.stop()
 
 current_user = st.session_state.user_id
 
-# --- 🚀 속도 최적화 캐시 ---
+# --- 🚀 철통 방어 캐시 ---
 @st.cache_data(ttl=600)
 def get_exchange_rate():
     try: 
@@ -25,9 +24,17 @@ def get_exchange_rate():
 
 @st.cache_data(ttl=300)
 def get_price(ticker):
+    if not ticker: return 0.0
     try: 
-        val = float(yf.Ticker(ticker).fast_info['last_price'])
-        return 0.0 if pd.isna(val) else val
+        t = yf.Ticker(ticker)
+        if 'last_price' in t.fast_info: 
+            val = float(t.fast_info['last_price'])
+            if not pd.isna(val) and val > 0: return val
+        hist = t.history(period="5d")
+        if not hist.empty: 
+            val = float(hist['Close'].iloc[-1])
+            if not pd.isna(val) and val > 0: return val
+        return 0.0
     except: return 0.0
 
 @st.cache_data(ttl=3600)
@@ -41,33 +48,33 @@ def get_chart(ticker):
     except: return None
     return None
 
-# --- 🔌 구글 시트 연결 (에러 방어막 씌우기!) ---
+# --- 🔌 구글 시트 연결 (읽기와 쓰기 완벽 분리 시스템) ---
 @st.cache_resource(ttl=600)
 def init_connection():
     scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
     creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
     return gspread.authorize(creds)
 
-try:
-    client = init_connection()
-    spreadsheet = client.open("ASSET_Simulation")
-    sheet_balance = spreadsheet.worksheet("잔고")
-    sheet_stocks = spreadsheet.worksheet("종목관리")
-    sheet_history = spreadsheet.worksheet("투자내역")
+@st.cache_data(ttl=300)
+def load_market_data():
+    try:
+        client = init_connection()
+        spreadsheet = client.open("ASSET_Simulation")
+        return (
+            spreadsheet.worksheet("잔고").get_all_records(),
+            spreadsheet.worksheet("종목관리").get_all_records(),
+            spreadsheet.worksheet("투자내역").get_all_records()
+        )
+    except Exception as e:
+        return None, None, None
 
-    balance_data = sheet_balance.get_all_records()
-    stock_data = sheet_stocks.get_all_records()
-    history_data = sheet_history.get_all_records()
-except gspread.exceptions.APIError:
-    st.warning("🚦 구글 서버가 일시적으로 혼잡합니다. 약 1분 뒤에 새로고침(F5)을 눌러주세요!")
+balance_data, stock_data, history_data = load_market_data()
+
+if balance_data is None:
+    st.warning("🚦 구글 서버가 일시적으로 혼잡합니다. 약 1분 뒤 새로고침(F5)을 눌러주세요!")
     st.stop()
-except Exception as e:
-    st.error("🔌 연결 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.")
-    st.stop()
 
-exchange_rate = get_exchange_rate()
-
-# --- 🔍 내 자산 찾기 ---
+# --- 🔍 자산 계산 ---
 user_row_idx = None
 current_cash = 0.0
 
@@ -94,6 +101,7 @@ def get_owned_stocks():
     return {k: round(v, 2) for k, v in owned.items() if round(v, 2) > 0}
 
 owned_stocks = get_owned_stocks()
+exchange_rate = get_exchange_rate()
 
 # --- 🖥️ 화면 그리기 ---
 st.title("✨ 주식 시장 (투자하기)")
@@ -112,7 +120,7 @@ if stock_data:
             ticker_symbol = str(stock.get('티커', '')).strip()
             name = str(stock.get('종목명', '')).strip()
             desc = str(stock.get('설명', '')).strip()
-            news_text = str(stock.get('최근뉴스', '')).strip() # 💡 종목별 뉴스 가져오기
+            news_text = str(stock.get('최근뉴스', '')).strip() 
             news_eval = str(stock.get('뉴스평가', '')).strip()
             
             try:
@@ -125,13 +133,11 @@ if stock_data:
                 my_qty = owned_stocks.get(name.replace(" ", ""), 0.0)
 
                 with st.expander(f"📦 {name} ({ticker_symbol}) - {desc}"):
-                    # 💡 평가에 맞춰 아이콘 지정 및 노출
                     if news_text:
                         if news_eval == '호재': news_icon = "🔴"
                         elif news_eval == '악재': news_icon = "🔵"
                         elif news_eval == '중립': news_icon = "🟡"
                         else: news_icon = "📰"
-                        
                         st.success(f"{news_icon} **최근 뉴스:** {news_text}")
                         
                     st.write(f"📊 **실시간 1주 가격:** {price_text}")
@@ -163,10 +169,18 @@ if stock_data:
                         
                         if st.button(f"'{name}' 매수하기", key=f"btn_b_{ticker_symbol}"):
                             if current_cash >= buy_cost:
+                                # 💡 글을 쓸 때만 구글 시트를 명시적으로 열어서 과부하를 막습니다!
+                                client = init_connection()
+                                spreadsheet = client.open("ASSET_Simulation")
+                                sheet_balance = spreadsheet.worksheet("잔고")
+                                sheet_history = spreadsheet.worksheet("투자내역")
+                                
                                 sheet_balance.update_cell(user_row_idx, 2, current_cash - buy_cost)
                                 now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                                 sheet_history.append_row([now, current_user, name, "매수", buy_qty, current_price])
+                                
                                 st.success("🎉 매수 성공! 홈 화면에서 자산을 확인해 보세요.")
+                                st.cache_data.clear() # 다음 화면에서 새 돈을 볼 수 있게 캐시 비우기
                                 st.rerun()
                             else: st.error("❌ 현금이 부족해요!")
 
@@ -177,10 +191,18 @@ if stock_data:
                         
                         if st.button(f"'{name}' 매도하기", key=f"btn_s_{ticker_symbol}"):
                             if my_qty >= sell_qty and sell_qty > 0:
+                                # 💡 글을 쓸 때만 구글 시트 오픈!
+                                client = init_connection()
+                                spreadsheet = client.open("ASSET_Simulation")
+                                sheet_balance = spreadsheet.worksheet("잔고")
+                                sheet_history = spreadsheet.worksheet("투자내역")
+                                
                                 sheet_balance.update_cell(user_row_idx, 2, current_cash + sell_reward)
                                 now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                                 sheet_history.append_row([now, current_user, name, "매도", sell_qty, current_price])
+                                
                                 st.success("🎉 매도 성공! 돈이 지갑으로 들어왔습니다.")
+                                st.cache_data.clear() # 다음 화면에서 새 돈을 볼 수 있게 캐시 비우기
                                 st.rerun()
                             else: st.error("❌ 팔 수 있는 주식이 부족하거나 수량이 잘못되었습니다.")
             except Exception as e: 
