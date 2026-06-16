@@ -4,16 +4,19 @@ from google.oauth2.service_account import Credentials
 import yfinance as yf
 import pandas as pd
 from datetime import datetime
-import math # 💡 수학 계산 오류를 막기 위한 도구 추가
 
 st.set_page_config(page_title="자산관리 시뮬레이션", layout="centered")
+
+# --- 🚀 1. 주가 비상 기억 저장소(세션 스테이트) 초기화 ---
+if "price_backup" not in st.session_state:
+    st.session_state.price_backup = {}
 
 # --- 🚀 속도 최적화 및 철통 방어 캐시 ---
 @st.cache_data(ttl=600)
 def get_exchange_rate():
     try: 
         rate = float(yf.Ticker("USDKRW=X").fast_info['last_price'])
-        return 1350.0 if pd.isna(rate) else rate
+        return 1350.0 if pd.isna(rate) or rate <= 0 else rate
     except: return 1350.0
 
 @st.cache_data(ttl=300)
@@ -23,37 +26,40 @@ def get_price(ticker):
         ticker_obj = yf.Ticker(ticker)
         if 'last_price' in ticker_obj.fast_info: 
             val = float(ticker_obj.fast_info['last_price'])
-            return 0.0 if pd.isna(val) else val # 💡 빈칸(NaN)이 오면 무조건 0으로 방어!
+            if not pd.isna(val) and val > 0: return val
             
         hist = ticker_obj.history(period="7d")
         if not hist.empty: 
             val = float(hist['Close'].iloc[-1])
-            return 0.0 if pd.isna(val) else val
+            if not pd.isna(val) and val > 0: return val
         return 0.0
     except: return 0.0
 
-# --- 🔌 구글 시트 연결 (에러 방어막 추가) ---
+# --- 🔌 구글 시트 연결 캐시 ---
 @st.cache_resource(ttl=600)
 def init_connection():
     scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
     creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
     return gspread.authorize(creds)
 
-try:
-    client = init_connection()
-    spreadsheet = client.open("ASSET_Simulation")
-    sheet_balance = spreadsheet.worksheet("잔고")
-    sheet_history = spreadsheet.worksheet("투자내역")
-    sheet_stocks = spreadsheet.worksheet("종목관리")
+# --- 📊 구글 시트 데이터 가져오기 (원천 차단 캐시 적용!) ---
+@st.cache_data(ttl=300) # 5분 동안 시트 데이터를 기억하여 구글 서버 과부하를 완전히 막습니다.
+def load_sheet_data():
+    try:
+        client = init_connection()
+        spreadsheet = client.open("ASSET_Simulation")
+        balance = spreadsheet.worksheet("잔고").get_all_records()
+        history = spreadsheet.worksheet("투자내역").get_all_records()
+        stocks = spreadsheet.worksheet("종목관리").get_all_records()
+        return balance, history, stocks
+    except:
+        return None, None, None
 
-    balance_data = sheet_balance.get_all_records()
-    history_data = sheet_history.get_all_records()
-    stock_data = sheet_stocks.get_all_records()
-except gspread.exceptions.APIError:
-    st.warning("🚦 구글 시트 접속자가 많아 서버가 일시적으로 지연되고 있습니다. 약 1분 뒤에 새로고침(F5)을 눌러주세요!")
-    st.stop()
-except Exception as e:
-    st.error("🔌 데이터를 불러오는 중 문제가 발생했습니다. 잠시 후 다시 시도해주세요.")
+balance_data, history_data, stock_data = load_sheet_data()
+
+# 구글 서버가 완전히 막혔을 때의 비상 안내 안내판
+if balance_data is None:
+    st.warning("🚦 구글 시트 서버의 응답이 일시적으로 지연되고 있습니다. 앱 내부 시스템은 안전하니 걱정마세요! 약 1분 뒤에 새로고침(F5)을 눌러주세요.")
     st.stop()
 
 exchange_rate = get_exchange_rate()
@@ -88,7 +94,10 @@ if not st.session_state.user_id:
                 if not new_user_input: st.error("등록할 이름을 입력해 주세요!")
                 elif new_user_input in existing_users: st.error("❌ 이미 존재하는 이름입니다!")
                 else:
-                    sheet_balance.append_row([new_user_input, 1000000, 0, 1000000, "", ""])
+                    client = init_connection()
+                    spreadsheet = client.open("ASSET_Simulation")
+                    spreadsheet.worksheet("잔고").append_row([new_user_input, 1000000, 0, 1000000, "", ""])
+                    st.cache_data.clear() # 새 유저 등록 시 캐시 리셋
                     st.session_state.user_id = new_user_input
                     st.success(f"🎉 {new_user_input}님의 첫 금고 개설 완료!")
                     st.rerun()
@@ -128,7 +137,7 @@ def get_user_portfolio():
 
 user_portfolio = get_user_portfolio()
 stock_details = []
-total_stock_value = 0.0 # 주식 총 가치 변수 초기화
+total_stock_value = 0.0
 price_error_flag = False
 
 for name, data in user_portfolio.items():
@@ -136,16 +145,21 @@ for name, data in user_portfolio.items():
     current_price = 0.0
     if ticker:
         raw_price = get_price(ticker)
-        if raw_price == 0.0: price_error_flag = True
+        
+        # 💡 [핵심 방어막] 야후 파이낸스가 주가를 못 가져오면(0원) 기존 성공했던 기억 저장소 가격을 복원합니다.
+        if raw_price > 0:
+            st.session_state.price_backup[ticker] = raw_price
+        else:
+            raw_price = st.session_state.price_backup.get(ticker, 0.0)
+            if raw_price > 0:
+                price_error_flag = True # 백업 가격을 가동했다는 내부 신호 활성화
+                
         is_korean = ticker.endswith('.KS') or ticker.endswith('.KQ')
         current_price = raw_price if is_korean else raw_price * exchange_rate
-    else: price_error_flag = True
     
     qty = data['qty']
     total_buy_cost = data['total_buy_cost']
     stock_value = current_price * qty
-    
-    # 💡 누락되었던 자산 총합 계산식 추가 완료!
     total_stock_value += stock_value 
     
     profit_amt = stock_value - total_buy_cost
@@ -251,6 +265,6 @@ if stock_details:
         st.dataframe(df_safe, hide_index=True, use_container_width=True)
     
     if price_error_flag:
-        st.error("⚠️ 일부 주식 가격을 불러오지 못했습니다. 아래 새로고침 버튼을 눌러주세요!")
+        st.info("💡 야후 파이낸스 해외 서버 지연으로 인해 일부 종목 주가를 백업 데이터에서 안전하게 불러왔습니다.")
 else:
     st.info("아직 보유한 주식이 없어요. 왼쪽 메뉴에서 첫 투자를 시작해 보세요!")
