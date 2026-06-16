@@ -18,12 +18,16 @@ current_user = st.session_state.user_id
 # --- 🚀 속도 최적화 캐시 ---
 @st.cache_data(ttl=600)
 def get_exchange_rate():
-    try: return float(yf.Ticker("USDKRW=X").fast_info['last_price'])
+    try: 
+        rate = float(yf.Ticker("USDKRW=X").fast_info['last_price'])
+        return 1350.0 if pd.isna(rate) else rate
     except: return 1350.0
 
 @st.cache_data(ttl=300)
 def get_price(ticker):
-    try: return float(yf.Ticker(ticker).fast_info['last_price'])
+    try: 
+        val = float(yf.Ticker(ticker).fast_info['last_price'])
+        return 0.0 if pd.isna(val) else val
     except: return 0.0
 
 @st.cache_data(ttl=3600)
@@ -37,22 +41,30 @@ def get_chart(ticker):
     except: return None
     return None
 
-# --- 🔌 구글 시트 연결 ---
+# --- 🔌 구글 시트 연결 (에러 방어막 씌우기!) ---
 @st.cache_resource(ttl=600)
 def init_connection():
     scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
     creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
-    client = gspread.authorize(creds)
-    return client.open("ASSET_Simulation")
+    return gspread.authorize(creds)
 
-spreadsheet = init_connection()
-sheet_balance = spreadsheet.worksheet("잔고")
-sheet_stocks = spreadsheet.worksheet("종목관리")
-sheet_history = spreadsheet.worksheet("투자내역")
+try:
+    client = init_connection()
+    spreadsheet = client.open("ASSET_Simulation")
+    sheet_balance = spreadsheet.worksheet("잔고")
+    sheet_stocks = spreadsheet.worksheet("종목관리")
+    sheet_history = spreadsheet.worksheet("투자내역")
 
-balance_data = sheet_balance.get_all_records()
-stock_data = sheet_stocks.get_all_records()
-history_data = sheet_history.get_all_records()
+    balance_data = sheet_balance.get_all_records()
+    stock_data = sheet_stocks.get_all_records()
+    history_data = sheet_history.get_all_records()
+except gspread.exceptions.APIError:
+    st.warning("🚦 구글 서버가 일시적으로 혼잡합니다. 약 1분 뒤에 새로고침(F5)을 눌러주세요!")
+    st.stop()
+except Exception as e:
+    st.error("🔌 연결 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.")
+    st.stop()
+
 exchange_rate = get_exchange_rate()
 
 # --- 🔍 내 자산 찾기 ---
