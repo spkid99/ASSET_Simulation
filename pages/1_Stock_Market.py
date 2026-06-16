@@ -14,67 +14,26 @@ if "user_id" not in st.session_state or not st.session_state.user_id:
 
 current_user = st.session_state.user_id
 
-# --- 🚀 철통 방어 캐시 ---
-@st.cache_data(ttl=600)
-def get_exchange_rate():
-    try: 
-        rate = float(yf.Ticker("USDKRW=X").fast_info['last_price'])
-        return 1350.0 if pd.isna(rate) else rate
-    except: return 1350.0
+# 메인화면(app.py)에서 로딩한 메모리가 없으면 강제 차단 (안전장치)
+if "db_loaded" not in st.session_state or not st.session_state.db_loaded:
+    st.warning("💡 먼저 메인 홈 화면(app.py)에서 자산을 한 번 불러와주세요!")
+    st.stop()
 
-@st.cache_data(ttl=300)
-def get_price(ticker):
-    if not ticker: return 0.0
-    try: 
-        t = yf.Ticker(ticker)
-        if 'last_price' in t.fast_info: 
-            val = float(t.fast_info['last_price'])
-            if not pd.isna(val) and val > 0: return val
-        hist = t.history(period="5d")
-        if not hist.empty: 
-            val = float(hist['Close'].iloc[-1])
-            if not pd.isna(val) and val > 0: return val
-        return 0.0
-    except: return 0.0
-
-@st.cache_data(ttl=3600)
-def get_chart(ticker):
-    try:
-        hist = yf.Ticker(ticker).history(period="1y")
-        if not hist.empty:
-            chart_data = hist[['Close']].copy()
-            chart_data.index = chart_data.index.tz_localize(None)
-            return chart_data
-    except: return None
-    return None
-
-# --- 🔌 구글 시트 연결 (읽기와 쓰기 완벽 분리 시스템) ---
-@st.cache_resource(ttl=600)
+@st.cache_resource(ttl=3600)
 def init_connection():
     scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
     creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
     return gspread.authorize(creds)
 
-@st.cache_data(ttl=300)
-def load_market_data():
-    try:
-        client = init_connection()
-        spreadsheet = client.open("ASSET_Simulation")
-        return (
-            spreadsheet.worksheet("잔고").get_all_records(),
-            spreadsheet.worksheet("종목관리").get_all_records(),
-            spreadsheet.worksheet("투자내역").get_all_records()
-        )
-    except Exception as e:
-        return None, None, None
+# ==========================================
+# 모든 데이터는 통신 없이 RAM 메모리에서 즉시 꺼내옵니다.
+# ==========================================
+balance_data = st.session_state.balance_data
+stock_data = st.session_state.stock_data
+history_data = st.session_state.history_data
+prices_cache = st.session_state.prices
+exchange_rate = st.session_state.exchange_rate
 
-balance_data, stock_data, history_data = load_market_data()
-
-if balance_data is None:
-    st.warning("🚦 구글 서버가 일시적으로 혼잡합니다. 약 1분 뒤 새로고침(F5)을 눌러주세요!")
-    st.stop()
-
-# --- 🔍 자산 계산 ---
 user_row_idx = None
 current_cash = 0.0
 
@@ -83,10 +42,6 @@ for idx, row in enumerate(balance_data):
         user_row_idx = idx + 2
         current_cash = float(row.get('현금잔액', 0))
         break
-
-if user_row_idx is None:
-    st.error("사용자 정보를 찾을 수 없습니다.")
-    st.stop()
 
 def get_owned_stocks():
     owned = {}
@@ -101,11 +56,9 @@ def get_owned_stocks():
     return {k: round(v, 2) for k, v in owned.items() if round(v, 2) > 0}
 
 owned_stocks = get_owned_stocks()
-exchange_rate = get_exchange_rate()
 
-# --- 🖥️ 화면 그리기 ---
 st.title("✨ 주식 시장 (투자하기)")
-st.info(f"👤 **{current_user}**님 자산 상태 ➡️ 💰 사용 가능한 현금: {current_cash:,.0f}원 | 💵 환율: {exchange_rate:,.2f}원")
+st.info(f"👤 **{current_user}**님 ➡️ 💰 사용 가능한 현금: {current_cash:,.0f}원")
 
 if stock_data:
     categories = list(set([str(stock.get('카테고리', '기타')).strip() for stock in stock_data]))
@@ -123,94 +76,79 @@ if stock_data:
             news_text = str(stock.get('최근뉴스', '')).strip() 
             news_eval = str(stock.get('뉴스평가', '')).strip()
             
-            try:
-                raw_price = get_price(ticker_symbol)
-                if raw_price == 0.0: continue
-                    
-                is_korean = ticker_symbol.endswith('.KS') or ticker_symbol.endswith('.KQ')
+            # 주가를 야후가 아닌 내부 메모리에서 즉시 0.001초 만에 꺼냅니다!
+            raw_price = prices_cache.get(ticker_symbol, 0.0)
+            is_korean = ticker_symbol.endswith('.KS') or ticker_symbol.endswith('.KQ')
+            
+            if raw_price == 0.0:
+                price_text = "⚠️ 통신 지연 (거래 불가)"
+                current_price = 0.0
+            else:
                 current_price = raw_price if is_korean else raw_price * exchange_rate
                 price_text = f"{current_price:,.0f}원" if is_korean else f"${raw_price:,.2f} (약 {current_price:,.0f}원)"
-                my_qty = owned_stocks.get(name.replace(" ", ""), 0.0)
+                
+            my_qty = round(owned_stocks.get(name.replace(" ", ""), 0.0), 4)
 
-                with st.expander(f"📦 {name} ({ticker_symbol}) - {desc}"):
-                    if news_text:
-                        if news_eval == '호재': news_icon = "🔴"
-                        elif news_eval == '악재': news_icon = "🔵"
-                        elif news_eval == '중립': news_icon = "🟡"
-                        else: news_icon = "📰"
-                        st.success(f"{news_icon} **최근 뉴스:** {news_text}")
-                        
-                    st.write(f"📊 **실시간 1주 가격:** {price_text}")
-                    st.write(f"💎 **내가 가진 수량:** {my_qty}주")
+            with st.expander(f"📦 {name} ({ticker_symbol}) - {desc}"):
+                if news_text:
+                    icon = "🔴" if news_eval == '호재' else "🔵" if news_eval == '악재' else "🟡" if news_eval == '중립' else "📰"
+                    st.success(f"{icon} **최근 뉴스:** {news_text}")
                     
-                    sub_chart, sub_buy, sub_sell = st.tabs(["📈 차트 보기", "🛒 매수하기", "💰 매도하기"])
-                    
-                    with sub_chart:
-                        chart_data = get_chart(ticker_symbol)
-                        if chart_data is not None:
-                            fig = go.Figure()
-                            fig.add_trace(go.Scatter(
-                                x=chart_data.index, y=chart_data['Close'], mode='lines',
-                                line=dict(color='#00C4FF', width=3),
-                                fill='tozeroy', fillcolor='rgba(0, 196, 255, 0.1)', name='주가'
-                            ))
-                            fig.update_layout(
-                                xaxis_rangeslider_visible=False, dragmode="pan",
-                                margin=dict(l=0, r=0, t=10, b=0), height=300, hovermode="x unified"
-                            )
-                            st.plotly_chart(fig, use_container_width=True, theme="streamlit")
-                        else:
-                            st.info("최근 차트 데이터가 없습니다.")
-                            
-                    with sub_buy:
+                st.write(f"📊 **실시간 1주 가격:** {price_text}")
+                st.write(f"💎 **내가 가진 수량:** {my_qty}주")
+                
+                sub_chart, sub_buy, sub_sell = st.tabs(["🛒 매수하기", "💰 매도하기", "📈 차트 보기(느림주의)"])
+                
+                with sub_buy:
+                    if raw_price == 0.0:
+                        st.error("주가 데이터 수신 오류로 매수 기능이 차단되었습니다.")
+                    else:
                         buy_qty = st.number_input(f"살 수량", min_value=0.01, step=0.01, format="%.2f", key=f"b_{ticker_symbol}")
                         buy_cost = current_price * buy_qty
                         st.write(f"💸 **총 매수금액:** {buy_cost:,.0f}원") 
                         
                         if st.button(f"'{name}' 매수하기", key=f"btn_b_{ticker_symbol}"):
                             if current_cash >= buy_cost:
-                                # 💡 글을 쓸 때만 구글 시트를 명시적으로 열어서 과부하를 막습니다!
+                                # 거래 버튼을 누르는 딱 이 순간에만 유일하게 구글에 접속합니다!
                                 client = init_connection()
                                 spreadsheet = client.open("ASSET_Simulation")
-                                sheet_balance = spreadsheet.worksheet("잔고")
-                                sheet_history = spreadsheet.worksheet("투자내역")
+                                spreadsheet.worksheet("잔고").update_cell(user_row_idx, 2, current_cash - buy_cost)
+                                spreadsheet.worksheet("투자내역").append_row([datetime.now().strftime("%Y-%m-%d %H:%M:%S"), current_user, name, "매수", buy_qty, current_price])
                                 
-                                sheet_balance.update_cell(user_row_idx, 2, current_cash - buy_cost)
-                                now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                                sheet_history.append_row([now, current_user, name, "매수", buy_qty, current_price])
-                                
-                                st.success("🎉 매수 성공! 홈 화면에서 자산을 확인해 보세요.")
-                                st.cache_data.clear() # 다음 화면에서 새 돈을 볼 수 있게 캐시 비우기
+                                # 데이터가 변경되었으므로 다음 번 화면에서 메모리를 업데이트하도록 지시
+                                st.session_state.db_loaded = False 
+                                st.success("🎉 매수 성공! 홈 화면에서 확인하세요.")
                                 st.rerun()
                             else: st.error("❌ 현금이 부족해요!")
 
-                    with sub_sell:
+                with sub_sell:
+                    if raw_price == 0.0:
+                        st.error("주가 데이터 수신 오류로 매도 기능이 차단되었습니다.")
+                    else:
                         sell_qty = st.number_input(f"팔 수량", min_value=0.00, max_value=float(max(my_qty, 0.01)), step=0.01, format="%.2f", key=f"s_{ticker_symbol}")
                         sell_reward = current_price * sell_qty
                         st.write(f"💰 **총 매도금액:** {sell_reward:,.0f}원") 
                         
                         if st.button(f"'{name}' 매도하기", key=f"btn_s_{ticker_symbol}"):
                             if my_qty >= sell_qty and sell_qty > 0:
-                                # 💡 글을 쓸 때만 구글 시트 오픈!
                                 client = init_connection()
                                 spreadsheet = client.open("ASSET_Simulation")
-                                sheet_balance = spreadsheet.worksheet("잔고")
-                                sheet_history = spreadsheet.worksheet("투자내역")
+                                spreadsheet.worksheet("잔고").update_cell(user_row_idx, 2, current_cash + sell_reward)
+                                spreadsheet.worksheet("투자내역").append_row([datetime.now().strftime("%Y-%m-%d %H:%M:%S"), current_user, name, "매도", sell_qty, current_price])
                                 
-                                sheet_balance.update_cell(user_row_idx, 2, current_cash + sell_reward)
-                                now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                                sheet_history.append_row([now, current_user, name, "매도", sell_qty, current_price])
-                                
-                                st.success("🎉 매도 성공! 돈이 지갑으로 들어왔습니다.")
-                                st.cache_data.clear() # 다음 화면에서 새 돈을 볼 수 있게 캐시 비우기
+                                st.session_state.db_loaded = False
+                                st.success("🎉 매도 성공! 현금이 들어왔습니다.")
                                 st.rerun()
-                            else: st.error("❌ 팔 수 있는 주식이 부족하거나 수량이 잘못되었습니다.")
-            except Exception as e: 
-                st.error(f"{name} 데이터를 불러올 수 없습니다.")
-else:
-    st.warning("종목관리 시트에 기업을 추가해 주세요.")
-
-st.divider()
-if st.button("🔄 실시간 주가 새로고침", use_container_width=True):
-    st.cache_data.clear()
-    st.rerun()
+                            else: st.error("❌ 주식이 부족합니다.")
+                            
+                with sub_chart:
+                    st.caption("주의: 차트는 인터넷에서 직접 불러오므로 렉이 발생할 수 있습니다.")
+                    try:
+                        hist = yf.Ticker(ticker_symbol).history(period="1y")
+                        if not hist.empty:
+                            fig = go.Figure()
+                            fig.add_trace(go.Scatter(x=hist.index.tz_localize(None), y=hist['Close'], mode='lines', line=dict(color='#00C4FF', width=3), fill='tozeroy', fillcolor='rgba(0, 196, 255, 0.1)'))
+                            fig.update_layout(xaxis_rangeslider_visible=False, dragmode="pan", margin=dict(l=0, r=0, t=10, b=0), height=300)
+                            st.plotly_chart(fig, use_container_width=True)
+                    except:
+                        st.info("차트를 불러올 수 없습니다.")
