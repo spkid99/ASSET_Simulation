@@ -4,13 +4,16 @@ from google.oauth2.service_account import Credentials
 import yfinance as yf
 import pandas as pd
 from datetime import datetime
+import math # 💡 수학 계산 오류를 막기 위한 도구 추가
 
 st.set_page_config(page_title="자산관리 시뮬레이션", layout="centered")
 
-# --- 🚀 속도 최적화 캐시 ---
+# --- 🚀 속도 최적화 및 철통 방어 캐시 ---
 @st.cache_data(ttl=600)
 def get_exchange_rate():
-    try: return float(yf.Ticker("USDKRW=X").fast_info['last_price'])
+    try: 
+        rate = float(yf.Ticker("USDKRW=X").fast_info['last_price'])
+        return 1350.0 if pd.isna(rate) else rate
     except: return 1350.0
 
 @st.cache_data(ttl=300)
@@ -18,30 +21,42 @@ def get_price(ticker):
     if not ticker: return 0.0
     try: 
         ticker_obj = yf.Ticker(ticker)
-        if 'last_price' in ticker_obj.fast_info: return float(ticker_obj.fast_info['last_price'])
+        if 'last_price' in ticker_obj.fast_info: 
+            val = float(ticker_obj.fast_info['last_price'])
+            return 0.0 if pd.isna(val) else val # 💡 빈칸(NaN)이 오면 무조건 0으로 방어!
+            
         hist = ticker_obj.history(period="7d")
-        if not hist.empty: return float(hist['Close'].iloc[-1])
+        if not hist.empty: 
+            val = float(hist['Close'].iloc[-1])
+            return 0.0 if pd.isna(val) else val
         return 0.0
     except: return 0.0
 
-# --- 🔌 구글 시트 연결 ---
+# --- 🔌 구글 시트 연결 (에러 방어막 추가) ---
 @st.cache_resource(ttl=600)
 def init_connection():
     scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
     creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
-    client = gspread.authorize(creds)
-    return client.open("ASSET_Simulation")
+    return gspread.authorize(creds)
 
-spreadsheet = init_connection()
-sheet_balance = spreadsheet.worksheet("잔고")
-sheet_history = spreadsheet.worksheet("투자내역")
-sheet_stocks = spreadsheet.worksheet("종목관리")
+try:
+    client = init_connection()
+    spreadsheet = client.open("ASSET_Simulation")
+    sheet_balance = spreadsheet.worksheet("잔고")
+    sheet_history = spreadsheet.worksheet("투자내역")
+    sheet_stocks = spreadsheet.worksheet("종목관리")
 
-balance_data = sheet_balance.get_all_records()
-history_data = sheet_history.get_all_records()
-stock_data = sheet_stocks.get_all_records()
+    balance_data = sheet_balance.get_all_records()
+    history_data = sheet_history.get_all_records()
+    stock_data = sheet_stocks.get_all_records()
+except gspread.exceptions.APIError:
+    st.warning("🚦 구글 시트 접속자가 많아 서버가 일시적으로 지연되고 있습니다. 약 1분 뒤에 새로고침(F5)을 눌러주세요!")
+    st.stop()
+except Exception as e:
+    st.error("🔌 데이터를 불러오는 중 문제가 발생했습니다. 잠시 후 다시 시도해주세요.")
+    st.stop()
+
 exchange_rate = get_exchange_rate()
-
 existing_users = [str(row.get('사용자', '')).strip() for row in balance_data if row.get('사용자', '')]
 
 # --- 🔐 로그인 / 회원 등록 시스템 ---
