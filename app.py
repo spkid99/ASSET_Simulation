@@ -6,9 +6,6 @@ from datetime import datetime
 
 st.set_page_config(page_title="자산관리 시뮬레이션", layout="centered")
 
-# ==========================================
-# 🚀 Supabase 전용 렉 원천 차단 메모리 시스템
-# ==========================================
 if "db_loaded" not in st.session_state:
     st.session_state.db_loaded = False
     st.session_state.balance_data = []
@@ -26,7 +23,6 @@ def init_connection() -> Client:
 def load_all_data_to_ram():
     try:
         supabase = init_connection()
-        # 💡 Supabase에서 0.1초만에 데이터 싹 쓸어오기!
         st.session_state.balance_data = supabase.table("balance").select("*").execute().data
         st.session_state.history_data = supabase.table("history").select("*").execute().data
         st.session_state.stock_data = supabase.table("stocks").select("*").execute().data
@@ -65,7 +61,6 @@ exchange_rate = st.session_state.exchange_rate
 
 existing_users = [str(row.get('사용자', '')).strip() for row in balance_data if row.get('사용자', '')]
 
-# --- 🔐 로그인 시스템 ---
 if "user_id" not in st.session_state:
     st.session_state.user_id = None
 
@@ -93,7 +88,6 @@ if not st.session_state.user_id:
                 if new_user_input in existing_users: st.error("❌ 이미 존재하는 이름입니다!")
                 else:
                     supabase = init_connection()
-                    # 💡 Supabase에 새 유저 정보 저장하기
                     supabase.table("balance").insert({"사용자": new_user_input, "현금잔액": 1000000, "예금잔액": 0, "초기자본금": 1000000}).execute()
                     st.session_state.db_loaded = False 
                     st.session_state.user_id = new_user_input
@@ -103,7 +97,6 @@ if not st.session_state.user_id:
 
 current_user = st.session_state.user_id
 
-# --- 자산 가공 ---
 current_cash, current_deposit, initial_capital = 0.0, 0.0, 1000000.0
 for row in balance_data:
     if str(row.get('사용자', '')).strip() == current_user:
@@ -148,11 +141,18 @@ for name, data in user_portfolio.items():
     current_price = raw_price if is_korean else raw_price * exchange_rate
     qty = data['qty']
     total_buy_cost = data['total_buy_cost']
+    
     stock_value = current_price * qty
+    
+    # 💡 야후에서 빈칸(NaN)이 넘어와서 수학 에러가 나는 것을 원천 차단!
+    if pd.isna(stock_value): stock_value = 0.0
+    if pd.isna(total_buy_cost): total_buy_cost = 0.0
+    
     total_stock_value += stock_value 
     
     profit_amt = stock_value - total_buy_cost
     profit_rate = (profit_amt / total_buy_cost * 100) if total_buy_cost > 0 else 0
+    if pd.isna(profit_rate): profit_rate = 0.0
     
     stock_details.append({
         '종목명': name, 
@@ -166,9 +166,9 @@ for name, data in user_portfolio.items():
 total_asset_value = current_cash + current_deposit + total_stock_value
 total_profit_amt = total_asset_value - initial_capital
 total_profit_rate = (total_profit_amt / initial_capital * 100) if initial_capital > 0 else 0
+if pd.isna(total_profit_rate): total_profit_rate = 0.0
 today_str = datetime.now().strftime("%Y년 %m월 %d일 기준")
 
-# --- UI 그리기 ---
 col_title, col_logout = st.columns([4, 1])
 with col_title: st.title(f"🏢 {current_user}의 자산관리")
 with col_logout:
