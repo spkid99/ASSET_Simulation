@@ -1,6 +1,5 @@
 import streamlit as st
-import gspread
-from google.oauth2.service_account import Credentials
+from supabase import create_client, Client
 import yfinance as yf
 from datetime import datetime
 
@@ -12,56 +11,56 @@ if "user_id" not in st.session_state or not st.session_state.user_id:
 
 current_user = st.session_state.user_id
 
-# --- 🚀 속도 최적화 캐시 ---
+# --- 🚀 철통 방어 캐시 ---
 @st.cache_data(ttl=600)
 def get_exchange_rate():
-    try: return float(yf.Ticker("USDKRW=X").fast_info['last_price'])
+    try: 
+        rate = float(yf.Ticker("USDKRW=X").fast_info['last_price'])
+        return 1350.0 if pd.isna(rate) else rate
     except: return 1350.0
 
 @st.cache_data(ttl=300)
 def get_price(ticker):
     if not ticker: return 0.0
     try: 
-        ticker_obj = yf.Ticker(ticker)
-        if 'last_price' in ticker_obj.fast_info: return float(ticker_obj.fast_info['last_price'])
-        hist = ticker_obj.history(period="7d")
-        if not hist.empty: return float(hist['Close'].iloc[-1])
+        t = yf.Ticker(ticker)
+        hist = t.history(period="5d")
+        if not hist.empty: 
+            val = float(hist['Close'].iloc[-1])
+            if not pd.isna(val) and val > 0: return val
+        if hasattr(t, 'fast_info') and 'last_price' in t.fast_info: 
+            val = float(t.fast_info['last_price'])
+            if not pd.isna(val) and val > 0: return val
         return 0.0
     except: return 0.0
 
-# --- 🔌 구글 시트 연결 (과부하 방지 철통 방어막 적용!) ---
-@st.cache_resource(ttl=600)
-def init_connection():
-    scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
-    creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
-    client = gspread.authorize(creds)
-    return client.open("ASSET_Simulation")
+@st.cache_resource(ttl=3600)
+def init_connection() -> Client:
+    url = st.secrets["SUPABASE_URL"]
+    key = st.secrets["SUPABASE_KEY"]
+    return create_client(url, key)
 
-spreadsheet = init_connection()
-sheet_balance = spreadsheet.worksheet("잔고")
-sheet_history = spreadsheet.worksheet("투자내역")
-sheet_stocks = spreadsheet.worksheet("종목관리")
+supabase = init_connection()
 
+# --- 📊 Supabase에서 실시간 데이터 로드 ---
+# 상점은 돈을 쓰는 곳이므로 캐시 대신 매번 최신 데이터를 불러옵니다 (Supabase는 0.1초만에 처리되므로 렉이 없습니다!)
 try:
-    sheet_shop = spreadsheet.worksheet("상점")
-    sheet_purchases = spreadsheet.worksheet("구매내역")
-except:
-    st.error("구글 시트에 [상점] 탭과 [구매내역] 탭을 먼저 만들어주세요!")
+    balance_data = supabase.table("balance").select("*").execute().data
+    history_data = supabase.table("history").select("*").execute().data
+    stock_data = supabase.table("stocks").select("*").execute().data
+    shop_items = supabase.table("shop_items").select("*").execute().data
+    purchase_values = supabase.table("purchases").select("*").execute().data
+except Exception as e:
+    st.error("데이터베이스 연결에 문제가 발생했습니다. 잠시 후 다시 시도해주세요.")
     st.stop()
 
-balance_data = sheet_balance.get_all_records()
-history_data = sheet_history.get_all_records()
-stock_data = sheet_stocks.get_all_records()
-shop_items = sheet_shop.get_all_records()
-purchase_values = sheet_purchases.get_all_values()
 exchange_rate = get_exchange_rate()
 ticker_map = {str(r.get('종목명', '')).replace(" ", ""): str(r.get('티커', '')).strip() for r in stock_data}
 
 # --- 🔍 자산 및 가용 수익금 계산 ---
-user_row_idx, current_cash, current_deposit, initial_capital = None, 0.0, 0.0, 1000000.0
-for idx, row in enumerate(balance_data):
+current_cash, current_deposit, initial_capital = 0.0, 0.0, 1000000.0
+for row in balance_data:
     if str(row.get('사용자', '')).strip() == current_user:
-        user_row_idx = idx + 2
         current_cash = float(row.get('현금잔액', 0))
         current_deposit = float(row.get('예금잔액', 0))
         initial_capital = float(row.get('초기자본금', 1000000))
@@ -71,7 +70,7 @@ portfolio = {}
 for row in history_data:
     if str(row.get('사용자', '')).strip() != current_user: continue
     name = str(row.get('종목명', '')).replace(" ", "")
-    kind = str(row.get('종류', row.get('종류(매수/매도)', ''))).strip()
+    kind = str(row.get('종류', '매수')).strip()
     try: qty = float(row.get('수량', 0))
     except: qty = 0.0
     if kind == '매수': portfolio[name] = portfolio.get(name, 0) + qty
@@ -83,19 +82,26 @@ for name, qty in portfolio.items():
     ticker = ticker_map.get(name, "")
     if ticker:
         raw_price = get_price(ticker)
+        # 만약 야후 서버 문제로 0원이 오면, 메인 화면 메모리에 백업된 가격이 있는지 확인
+        if raw_price == 0.0 and 'prices' in st.session_state:
+            raw_price = st.session_state.prices.get(ticker, 0.0)
+            
         is_korean = ticker.endswith('.KS') or ticker.endswith('.KQ')
         total_stock_value += (raw_price if is_korean else raw_price * exchange_rate) * qty
 
 total_asset = current_cash + current_deposit + total_stock_value
 available_profit = max(total_asset - initial_capital, 0)
 
-# --- 🎟️ 내 쿠폰지갑 데이터 추출 ---
+# --- 🎟️ 내 쿠폰지갑 데이터 가공 ---
 user_coupons = []
-for r_idx, row in enumerate(purchase_values[1:], start=2):
-    while len(row) < 5: row.append("사용전")
-    if str(row[1]).strip() == current_user:
+for row in purchase_values:
+    if str(row.get('사용자', '')).strip() == current_user:
         user_coupons.append({
-            'row_idx': r_idx, '시간': row[0], '상품명': row[2], '결제금액': row[3], '상태': row[4] if row[4] else "사용전"
+            'id': row.get('id'),
+            '시간': row.get('시간', ''),
+            '상품명': row.get('상품명', ''),
+            '결제금액': row.get('결제금액', 0),
+            '상태': row.get('상태', '사용전')
         })
 
 # --- 🖥️ 화면 구성 ---
@@ -115,9 +121,10 @@ with tab_shop:
         cols = st.columns(2)
         for idx, item in enumerate(shop_items):
             img_url = str(item.get('이미지URL', '')).strip()
-            name = item.get('상품명', '이름 없음')
-            price = float(item.get('가격', 0))
-            desc = item.get('설명', '')
+            name = str(item.get('상품명', '이름 없음')).strip()
+            try: price = float(item.get('가격', 0))
+            except: price = 0.0
+            desc = str(item.get('설명', '')).strip()
             
             with cols[idx % 2]:
                 with st.container(border=True):
@@ -129,12 +136,24 @@ with tab_shop:
                     st.caption(desc)
                     
                     if st.button(f"구매하기", key=f"buy_{idx}", use_container_width=True):
-                        if available_profit < price: st.error("❌ 쓸 수 있는 수익금이 부족해요!")
-                        elif current_cash < price: st.error("❌ 지갑에 실물 현금이 부족합니다.")
+                        if available_profit < price: 
+                            st.error("❌ 쓸 수 있는 수익금이 부족해요!")
+                        elif current_cash < price: 
+                            st.error("❌ 지갑에 실물 현금이 부족합니다. 주식을 일부 매도해 주세요.")
                         else:
-                            sheet_balance.update_cell(user_row_idx, 2, current_cash - price)
+                            # 💡 Supabase 잔고 차감 및 구매내역 추가
+                            supabase.table("balance").update({"현금잔액": current_cash - price}).eq("사용자", current_user).execute()
                             now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                            sheet_purchases.append_row([now_str, current_user, name, price, "사용전"])
+                            supabase.table("purchases").insert({
+                                "시간": now_str,
+                                "사용자": current_user,
+                                "상품명": name,
+                                "결제금액": price,
+                                "상태": "사용전"
+                            }).execute()
+                            
+                            # 데이터 변경 알림 (앱 전체 메모리 동기화)
+                            st.session_state.db_loaded = False
                             st.success(f"🎉 {name} 구매 완료! '내 쿠폰지갑'으로 전송되었습니다.")
                             st.rerun()
 
@@ -153,7 +172,8 @@ with tab_wallet:
                     st.write("")
                     if cp['상태'] == "사용전":
                         if st.button("🎟️ 사용하기", key=f"use_btn_{c_idx}", use_container_width=True):
-                            sheet_purchases.update_cell(cp['row_idx'], 5, "사용완료")
+                            # 💡 Supabase 쿠폰 상태 업데이트 (사용완료)
+                            supabase.table("purchases").update({"상태": "사용완료"}).eq("id", cp['id']).execute()
                             st.success("쿠폰을 사용 처리했습니다! 부모님께 선물을 요청하세요.")
                             st.rerun()
                     elif cp['상태'] == "사용완료":
