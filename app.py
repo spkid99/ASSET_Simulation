@@ -7,71 +7,77 @@ from datetime import datetime
 
 st.set_page_config(page_title="자산관리 시뮬레이션", layout="centered")
 
-if "price_backup" not in st.session_state:
-    st.session_state.price_backup = {}
+# ==========================================
+# 🚀 1. 렉 원천 차단: 내부 메모리(RAM) 초기화
+# ==========================================
+if "db_loaded" not in st.session_state:
+    st.session_state.db_loaded = False
+    st.session_state.balance_data = []
+    st.session_state.history_data = []
+    st.session_state.stock_data = []
+    st.session_state.prices = {}
+    st.session_state.exchange_rate = 1350.0
 
-# --- 🚀 철통 방어 캐시 시스템 ---
-@st.cache_data(ttl=600)
-def get_exchange_rate():
-    try: 
-        rate = float(yf.Ticker("USDKRW=X").fast_info['last_price'])
-        return 1350.0 if pd.isna(rate) or rate <= 0 else rate
-    except: return 1350.0
-
-@st.cache_data(ttl=300)
-def get_price(ticker):
-    if not ticker: return 0.0
-    try: 
-        t = yf.Ticker(ticker)
-        # 1차 시도: 실시간 가격
-        if 'last_price' in t.fast_info: 
-            val = float(t.fast_info['last_price'])
-            if not pd.isna(val) and val > 0: return val
-            
-        # 2차 시도: 야후 서버가 뻗었을 때 최근 5일치 종가 강제 추적
-        hist = t.history(period="5d")
-        if not hist.empty: 
-            val = float(hist['Close'].iloc[-1])
-            if not pd.isna(val) and val > 0: return val
-        return 0.0
-    except: return 0.0
-
-@st.cache_resource(ttl=600)
+@st.cache_resource(ttl=3600)
 def init_connection():
     scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
     creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
     return gspread.authorize(creds)
 
-@st.cache_data(ttl=300)
-def load_sheet_data():
+def load_all_data_to_ram():
     try:
         client = init_connection()
         spreadsheet = client.open("ASSET_Simulation")
-        return (
-            spreadsheet.worksheet("잔고").get_all_records(),
-            spreadsheet.worksheet("투자내역").get_all_records(),
-            spreadsheet.worksheet("종목관리").get_all_records()
-        )
-    except:
-        return None, None, None
+        st.session_state.balance_data = spreadsheet.worksheet("잔고").get_all_records()
+        st.session_state.history_data = spreadsheet.worksheet("투자내역").get_all_records()
+        st.session_state.stock_data = spreadsheet.worksheet("종목관리").get_all_records()
+        
+        # 주가도 최초 1번만 일괄 조회 후 메모리에 박제
+        for stock in st.session_state.stock_data:
+            ticker = str(stock.get('티커', '')).strip()
+            if ticker and ticker not in st.session_state.prices:
+                try:
+                    hist = yf.Ticker(ticker).history(period="5d")
+                    val = float(hist['Close'].iloc[-1]) if not hist.empty else 0.0
+                    if val <= 0 and 'last_price' in yf.Ticker(ticker).fast_info:
+                        val = float(yf.Ticker(ticker).fast_info['last_price'])
+                    st.session_state.prices[ticker] = val if val > 0 else 0.0
+                except:
+                    st.session_state.prices[ticker] = 0.0
+                    
+        try:
+            rate = float(yf.Ticker("USDKRW=X").fast_info['last_price'])
+            st.session_state.exchange_rate = rate if rate > 0 else 1350.0
+        except:
+            pass
+            
+        st.session_state.db_loaded = True
+    except Exception as e:
+        st.error("초기 데이터 로딩 실패. 잠시 후 다시 시도해주세요.")
 
-balance_data, history_data, stock_data = load_sheet_data()
+# 앱 실행 시 메모리가 비어있거나 '새로고침' 버튼을 눌렀을 때만 통신 실행
+if not st.session_state.db_loaded:
+    with st.spinner("🚀 서버 통신 중... (최초 1회만 실행되며 이후 렉이 사라집니다)"):
+        load_all_data_to_ram()
 
-if balance_data is None:
-    st.warning("🚦 구글 시트 접속자가 많아 서버가 일시적으로 지연되고 있습니다. 약 1분 뒤에 새로고침(F5)을 눌러주세요!")
-    st.stop()
+# ==========================================
+# 📊 2. 모든 로직은 메모리(session_state) 데이터만 사용 (통신 0번)
+# ==========================================
+balance_data = st.session_state.balance_data
+history_data = st.session_state.history_data
+stock_data = st.session_state.stock_data
+prices_cache = st.session_state.prices
+exchange_rate = st.session_state.exchange_rate
 
-exchange_rate = get_exchange_rate()
 existing_users = [str(row.get('사용자', '')).strip() for row in balance_data if row.get('사용자', '')]
 
-# --- 🔐 로그인 / 회원 등록 시스템 ---
+# --- 🔐 로그인 시스템 ---
 if "user_id" not in st.session_state:
     st.session_state.user_id = None
 
 if not st.session_state.user_id:
     st.title("💼 자산관리 시뮬레이션 시스템")
     st.write("나만의 자산관리 금고를 열거나 새 금고를 만들어보세요.")
-    
     menu = st.radio("원하는 작업을 선택하세요", ["🔐 로그인", "📝 신규 유저 등록"], horizontal=True)
     
     if menu == "🔐 로그인":
@@ -90,21 +96,20 @@ if not st.session_state.user_id:
             new_user_input = st.text_input("👤 새 유저 이름 입력 (중복 불가)").strip()
             submitted = st.form_submit_button("새 금고 만들기 🔨")
             if submitted:
-                if not new_user_input: st.error("등록할 이름을 입력해 주세요!")
-                elif new_user_input in existing_users: st.error("❌ 이미 존재하는 이름입니다!")
+                if new_user_input in existing_users: st.error("❌ 이미 존재하는 이름입니다!")
                 else:
                     client = init_connection()
                     spreadsheet = client.open("ASSET_Simulation")
                     spreadsheet.worksheet("잔고").append_row([new_user_input, 1000000, 0, 1000000, "", ""])
-                    st.cache_data.clear()
+                    st.session_state.db_loaded = False # 새 데이터를 반영하기 위해 메모리 리셋
                     st.session_state.user_id = new_user_input
-                    st.success(f"🎉 {new_user_input}님의 첫 금고 개설 완료!")
+                    st.success(f"🎉 {new_user_input}님의 금고 개설 완료! 새로고침 해주세요.")
                     st.rerun()
     st.stop()
 
 current_user = st.session_state.user_id
 
-# --- 📊 자산 데이터 가공 ---
+# --- 자산 가공 (메모리에서 초고속 처리) ---
 current_cash, current_deposit, initial_capital = 0.0, 0.0, 1000000.0
 for row in balance_data:
     if str(row.get('사용자', '')).strip() == current_user:
@@ -137,30 +142,18 @@ def get_user_portfolio():
 user_portfolio = get_user_portfolio()
 stock_details = []
 total_stock_value = 0.0
-price_error_flag = False
 
 for name, data in user_portfolio.items():
     ticker = ticker_map.get(name, "")
-    current_price = 0.0
-    if ticker:
-        raw_price = get_price(ticker)
+    is_korean = ticker.endswith('.KS') or ticker.endswith('.KQ')
+    
+    # 야후 접속 없이 메모리에서 주가 즉시 호출
+    raw_price = prices_cache.get(ticker, 0.0)
+    if raw_price == 0.0:
+        raw_price = (data['total_buy_cost'] / data['qty']) if data['qty'] > 0 else 0.0
         
-        if raw_price > 0:
-            st.session_state.price_backup[ticker] = raw_price
-        else:
-            raw_price = st.session_state.price_backup.get(ticker, 0.0)
-            if raw_price > 0:
-                price_error_flag = True
-                
-        is_korean = ticker.endswith('.KS') or ticker.endswith('.KQ')
-        current_price = raw_price if is_korean else raw_price * exchange_rate
-    
+    current_price = raw_price if is_korean else raw_price * exchange_rate
     qty = data['qty']
-    
-    # 💡 0.200000 처럼 꼬리가 길어지는 것을 방지 (깔끔하게 정돈)
-    clean_qty = round(qty, 4)
-    if clean_qty == int(clean_qty): clean_qty = int(clean_qty)
-
     total_buy_cost = data['total_buy_cost']
     stock_value = current_price * qty
     total_stock_value += stock_value 
@@ -170,7 +163,7 @@ for name, data in user_portfolio.items():
     
     stock_details.append({
         '종목명': name, 
-        '보유 수량(주)': clean_qty, 
+        '보유 수량(주)': round(qty, 4), 
         '총 매수금액(원)': round(total_buy_cost),
         '현재 총 가치(원)': round(stock_value), 
         '수익률(%)': round(profit_rate, 2), 
@@ -182,7 +175,7 @@ total_profit_amt = total_asset_value - initial_capital
 total_profit_rate = (total_profit_amt / initial_capital * 100) if initial_capital > 0 else 0
 today_str = datetime.now().strftime("%Y년 %m월 %d일 기준")
 
-# --- 🖥️ 대시보드 UI ---
+# --- UI 그리기 ---
 col_title, col_logout = st.columns([4, 1])
 with col_title: st.title(f"🏢 {current_user}의 자산관리")
 with col_logout:
@@ -192,88 +185,47 @@ with col_logout:
         st.rerun()
 
 st.divider()
-
 hot_news = []
 for stock in stock_data:
     is_hot = str(stock.get('핫한뉴스선정', '')).strip().upper()
-    news_text = str(stock.get('최근뉴스', '')).strip()
-    news_eval = str(stock.get('뉴스평가', '')).strip()
-    name = str(stock.get('종목명', '')).strip()
-    if is_hot in ['O', '0', 'V', 'TRUE', 'Y'] and news_text:
-        if news_eval == '호재': icon = "🔴"
-        elif news_eval == '악재': icon = "🔵"
-        elif news_eval == '중립': icon = "🟡"
-        else: icon = "📰"
-        hot_news.append((name, news_text, icon))
+    if is_hot in ['O', '0', 'V', 'TRUE', 'Y']:
+        news_eval = str(stock.get('뉴스평가', '')).strip()
+        icon = "🔴" if news_eval == '호재' else "🔵" if news_eval == '악재' else "🟡" if news_eval == '중립' else "📰"
+        hot_news.append((str(stock.get('종목명', '')).strip(), str(stock.get('최근뉴스', '')).strip(), icon))
 
 if hot_news:
-    st.subheader("🔥 오늘의 주식 시장 핫이슈")
-    for name, news, icon in hot_news[:5]:
-        st.info(f"**[{name}]** {icon} {news}")
+    st.subheader("🔥 오늘의 핫이슈")
+    for name, news, icon in hot_news[:5]: st.info(f"**[{name}]** {icon} {news}")
     st.divider()
 
-st.subheader("💎 나의 총 자산")
-st.caption(f"🗓️ {today_str}")
-st.metric(
-    label=f"💰 시작 원금: {initial_capital:,.0f} 원", 
-    value=f"{total_asset_value:,.0f} 원",
-    delta=f"총 {total_profit_amt:,.0f} 원 ({total_profit_rate:,.2f}%) 수익"
-)
-
+st.metric(label=f"💰 시작 원금: {initial_capital:,.0f} 원", value=f"{total_asset_value:,.0f} 원", delta=f"총 {total_profit_amt:,.0f} 원 ({total_profit_rate:,.2f}%) 수익")
 st.divider()
-st.subheader("📊 자산 구성 요약")
+
 col1, col2, col3 = st.columns(3)
 with col1:
-    with st.container(border=True):
-        st.write("💵 **현금 잔액**")
-        st.subheader(f"{current_cash:,.0f}원")
+    with st.container(border=True): st.write("💵 **현금**"); st.subheader(f"{current_cash:,.0f}원")
 with col2:
-    with st.container(border=True):
-        st.write("🏛️ **은행 예금**")
-        st.subheader(f"{current_deposit:,.0f}원")
+    with st.container(border=True): st.write("🏛️ **예금**"); st.subheader(f"{current_deposit:,.0f}원")
 with col3:
-    with st.container(border=True):
-        st.write("📈 **주식 총 가치**")
-        st.subheader(f"{total_stock_value:,.0f}원")
+    with st.container(border=True): st.write("📈 **주식가치**"); st.subheader(f"{total_stock_value:,.0f}원")
 
 st.write("")
 st.write("💼 **상세 주식 보유 내역**")
 if stock_details:
     df_owned = pd.DataFrame(stock_details)
     try:
-        def color_profit(val): 
-            if pd.isna(val): return ""
-            return f"color: {'#ff4b4b' if val > 0 else '#0083ff' if val < 0 else 'black'}"
-            
-        styled_df = df_owned.style.format({
-            '총 매수금액(원)': '{:,.0f}', 
-            '현재 총 가치(원)': '{:,.0f}', 
-            '수익금액(원)': '{:,.0f}', 
-            '수익률(%)': '{:,.2f}%'
-        })
-        
-        if hasattr(styled_df, 'map'):
-            styled_df = styled_df.map(color_profit, subset=['수익률(%)', '수익금액(원)'])
-        else:
-            styled_df = styled_df.applymap(color_profit, subset=['수익률(%)', '수익금액(원)'])
-            
+        def color_profit(val): return f"color: {'#ff4b4b' if val > 0 else '#0083ff' if val < 0 else 'black'}"
+        styled_df = df_owned.style.format({'총 매수금액(원)': '{:,.0f}', '현재 총 가치(원)': '{:,.0f}', '수익금액(원)': '{:,.0f}', '수익률(%)': '{:,.2f}%'})
+        styled_df = styled_df.map(color_profit, subset=['수익률(%)', '수익금액(원)']) if hasattr(styled_df, 'map') else styled_df.applymap(color_profit, subset=['수익률(%)', '수익금액(원)'])
         st.dataframe(styled_df, hide_index=True, use_container_width=True)
     except:
-        df_safe = df_owned.copy()
-        df_safe['총 매수금액(원)'] = df_safe['총 매수금액(원)'].apply(lambda x: f"{x:,.0f}")
-        df_safe['현재 총 가치(원)'] = df_safe['현재 총 가치(원)'].apply(lambda x: f"{x:,.0f}")
-        df_safe['수익금액(원)'] = df_safe['수익금액(원)'].apply(lambda x: f"{x:,.0f}")
-        df_safe['수익률(%)'] = df_safe['수익률(%)'].apply(lambda x: f"{x:,.2f}%")
-        st.dataframe(df_safe, hide_index=True, use_container_width=True)
-    
-    if price_error_flag:
-        st.info("💡 야후 파이낸스 해외 서버 지연으로 인해 일부 종목 주가를 과거 데이터에서 안전하게 불러왔습니다.")
+        st.dataframe(df_owned, hide_index=True, use_container_width=True)
 else:
-    st.info("아직 보유한 주식이 없어요. 왼쪽 메뉴에서 첫 투자를 시작해 보세요!")
+    st.info("아직 보유한 주식이 없어요. 투자를 시작해 보세요!")
 
 st.divider()
 
-# 💡 실종되었던 새로고침 버튼을 아주 확실하게 재배치!
-if st.button("🔄 실시간 주식 가격 새로고침", use_container_width=True):
-    st.cache_data.clear()
+# 버튼을 누르면 메모리를 강제로 지워서, 다음 화면에서 통신이 일어나도록 만듦
+if st.button("🔄 실시간 주가 새로고침 (서버 동기화)", use_container_width=True):
+    st.session_state.db_loaded = False
     st.rerun()
