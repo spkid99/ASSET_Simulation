@@ -1,7 +1,7 @@
 streamlit
 gspread
 google-auth
-yfinance
+yfinance>=0.2.37
 pandas
 plotly
 supabase
