@@ -108,35 +108,61 @@ with tab_sys:
     st.subheader("📈 [부모님 전용] 실시간 주가 강제 업데이트 시스템")
     st.write("자동으로 하루 1회 고정되지만, 지금 즉시 주가를 새로 고치고 싶다면 아래 버튼을 누르세요.")
     if st.button("🔄 지금 즉시 야후 파이낸스 동기화 및 전 종목 현재가 저장", use_container_width=True):
-        with st.spinner("야후 검문소를 뚫고 실시간 주가 긁어오는 중..."):
+        with st.spinner("야후 검문소를 뚫고 실시간 주가 긁어오는 중... 잠시만 기다려주세요!"):
             
-            # 💡 핵심: 진짜 사람(크롬 브라우저)인 척하는 신분증(Session) 만들기
             session = requests.Session()
             session.headers.update({
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+                "Accept": "*/*",
+                "Accept-Encoding": "gzip, deflate, br"
             })
+            
+            success_logs = []
+            fail_logs = []
             
             for stock in stock_data:
                 ticker = str(stock.get('티커', '')).strip()
                 sid = stock.get('id')
+                name = str(stock.get('종목명', ''))
+                
                 if ticker:
                     try:
-                        # 위조 신분증(session)을 야후에 제시하며 가격 요구
+                        # 💡 가장 가벼운 fast_info로 우회 시도
                         t = yf.Ticker(ticker, session=session)
-                        hist = t.history(period="5d")
-                        val = float(hist['Close'].iloc[-1]) if not hist.empty else 0.0
+                        val = 0.0
+                        try:
+                            val = float(t.fast_info['last_price'])
+                        except:
+                            # 실패 시 일반 history로 2차 시도
+                            hist = t.history(period="1d")
+                            if not hist.empty:
+                                val = float(hist['Close'].iloc[-1])
+                                
                         if val > 0:
                             supabase.table("stocks").update({"현재가": val}).eq("id", sid).execute()
-                    except: pass
+                            success_logs.append(f"✅ {name} ({ticker}): {val:,.2f} 성공")
+                        else:
+                            fail_logs.append(f"❌ {name} ({ticker}): 0원 반환됨 (티커 오류이거나 야후 차단)")
+                    except Exception as e:
+                        fail_logs.append(f"❌ {name} ({ticker}): 에러 발생 ({str(e)})")
             
+            # 환율 업데이트
             try:
                 t_rate = yf.Ticker("USDKRW=X", session=session)
                 rate = float(t_rate.fast_info['last_price'])
-                if rate > 0: st.session_state.exchange_rate = rate
-            except: pass
+                if rate > 0: 
+                    st.session_state.exchange_rate = rate
+                    success_logs.append(f"✅ 환율 (USDKRW=X): {rate:,.2f}원 성공")
+            except Exception as e: 
+                fail_logs.append(f"❌ 환율: 에러 발생 ({str(e)})")
             
             today_date = datetime.now().strftime("%Y-%m-%d")
             supabase.table("system_settings").update({"value": today_date}).eq("key", "last_stock_update").execute()
             st.session_state.db_loaded = False
-            st.success("🎉 전 종목 실시간 주가가 수파베이스 금고에 완벽하게 갱신 및 저장되었습니다!")
-            st.rerun()
+            
+            if success_logs:
+                st.success("🎉 아래 종목들의 주가 저장이 완료되었습니다!")
+                for log in success_logs: st.write(log)
+            if fail_logs:
+                st.error("🚨 아래 종목들은 데이터를 가져오지 못했습니다. 티커(종목코드)가 잘못되었는지 확인해 주세요.")
+                for log in fail_logs: st.write(log)
