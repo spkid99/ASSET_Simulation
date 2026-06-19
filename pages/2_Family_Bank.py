@@ -1,7 +1,6 @@
 import streamlit as st
 from supabase import create_client, Client
 from datetime import datetime
-import pandas as pd
 
 st.set_page_config(page_title="가족 은행", layout="centered")
 
@@ -20,7 +19,6 @@ def init_connection() -> Client:
 supabase = init_connection()
 
 try:
-    # 💡 내 지갑 정보와 함께 '만기일' 데이터도 쏙 뽑아옵니다.
     user_res = supabase.table("balance").select("*").eq("사용자", current_user).execute()
     if not user_res.data:
         st.error("사용자 정보를 찾을 수 없습니다.")
@@ -39,12 +37,11 @@ except Exception as e:
 is_locked = False
 today = datetime.now().date()
 
-# 데이터베이스에 만기일이 적혀있다면 날짜를 비교합니다.
 if maturity_date_str and maturity_date_str.lower() != 'nan':
     try:
         maturity_date = datetime.strptime(maturity_date_str, "%Y-%m-%d").date()
         if today < maturity_date:
-            is_locked = True # 아직 만기일이 안 지났으면 자물쇠 철칵!
+            is_locked = True
     except:
         pass 
 
@@ -63,7 +60,6 @@ with col_top2:
         st.write("🏛️ **은행 통장 (예금)**")
         st.subheader(f"{current_deposit:,.0f} 원")
         
-        # 만기일 상태 표시기
         if maturity_date_str and maturity_date_str.lower() != 'nan':
             if is_locked:
                 st.markdown(f"🔒 **만기일:** <span style='color:#ff4b4b;'>{maturity_date_str} (출금 불가)</span>", unsafe_allow_html=True)
@@ -74,23 +70,19 @@ with col_top2:
 
 st.divider()
 
-# 🎛️ 예금/출금 UI (탭이 아닌 원래의 직관적인 좌우 나란히 배치)
+# 🎛️ 예금/출금 UI (원래의 직관적인 좌우 나란히 배치)
 col_in, col_out = st.columns(2)
 
 with col_in:
     st.subheader("💰 예금하기")
     st.write("지갑의 현금을 은행에 넣습니다.")
-    
     in_amt = st.number_input("예금할 금액 (원)", min_value=0.0, step=1000.0, format="%.0f", key="in_amt")
     
     if st.button("입금 확정", use_container_width=True, type="primary"):
         if current_cash >= in_amt and in_amt > 0:
-            supabase.table("balance").update({
-                "현금잔액": current_cash - in_amt, 
-                "예금잔액": current_deposit + in_amt
-            }).eq("사용자", current_user).execute()
-            
-            st.session_state.db_loaded = False # 메인 화면 메모리 동기화 신호
+            # 💡 문법 오류 방지를 위해 한 줄로 깔끔하게 정리했습니다.
+            supabase.table("balance").update({"현금잔액": current_cash - in_amt, "예금잔액": current_deposit + in_amt}).eq("사용자", current_user).execute()
+            st.session_state.db_loaded = False
             st.success(f"🎉 {in_amt:,.0f}원 예금 완료!")
             st.rerun()
         elif in_amt <= 0:
@@ -101,20 +93,20 @@ with col_in:
 with col_out:
     st.subheader("💸 출금하기")
     st.write("은행의 예금을 지갑으로 뺍니다.")
-    
     out_amt = st.number_input("출금할 금액 (원)", min_value=0.0, step=1000.0, format="%.0f", key="out_amt")
     
-    # 💡 만기일이 지나지 않았다면 버튼 자체를 아예 비활성화(막아버림) 시킵니다!
     if is_locked:
         st.error(f"🔒 약속한 만기일({maturity_date_str})까지 꾹 참아야 합니다!")
         st.button("출금 확정", disabled=True, use_container_width=True, key="btn_out_locked")
     else:
         if st.button("출금 확정", use_container_width=True, type="primary", key="btn_out_free"):
             if current_deposit >= out_amt and out_amt > 0:
-                supabase.table("balance").update({
-                    "현금잔액": current_cash + out_amt, 
-                    "예금잔액": current_deposit - out_amt
-                }).eq("사용자", current_user).execute()
-                
+                # 💡 마찬가지로 안정적인 일렬 코드로 전면 교정했습니다.
+                supabase.table("balance").update({"현금잔액": current_cash + out_amt, "예금잔액": current_deposit - out_amt}).eq("사용자", current_user).execute()
                 st.session_state.db_loaded = False
-                st.success(f"
+                st.success(f"🎉 {out_amt:,.0f}원 출금 완료!")
+                st.rerun()
+            elif out_amt <= 0:
+                st.warning("금액을 1원 이상 입력해주세요.")
+            else: 
+                st.error("❌ 은행 예금이 부족합니다.")
