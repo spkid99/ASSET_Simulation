@@ -129,22 +129,26 @@ def get_user_portfolio():
 user_portfolio = get_user_portfolio()
 stock_details = []
 total_stock_value = 0.0
+price_error_flag = False
 
 for name, data in user_portfolio.items():
     ticker = ticker_map.get(name, "")
     is_korean = ticker.endswith('.KS') or ticker.endswith('.KQ')
     
     raw_price = prices_cache.get(ticker, 0.0)
-    if raw_price == 0.0:
-        raw_price = (data['total_buy_cost'] / data['qty']) if data['qty'] > 0 else 0.0
+    
+    # 💡 [핵심 수정 부분] 야후 서버 지연 시 환율 중복 계산 원천 차단!
+    if raw_price > 0:
+        current_price = raw_price if is_korean else raw_price * exchange_rate
+    else:
+        price_error_flag = True
+        current_price = (data['total_buy_cost'] / data['qty']) if data['qty'] > 0 else 0.0
         
-    current_price = raw_price if is_korean else raw_price * exchange_rate
     qty = data['qty']
     total_buy_cost = data['total_buy_cost']
     
     stock_value = current_price * qty
     
-    # 💡 야후에서 빈칸(NaN)이 넘어와서 수학 에러가 나는 것을 원천 차단!
     if pd.isna(stock_value): stock_value = 0.0
     if pd.isna(total_buy_cost): total_buy_cost = 0.0
     
@@ -213,6 +217,9 @@ if stock_details:
         st.dataframe(styled_df, hide_index=True, use_container_width=True)
     except:
         st.dataframe(df_owned, hide_index=True, use_container_width=True)
+        
+    if price_error_flag:
+        st.warning("⚠️ 야후 파이낸스 서버 지연으로 일부 종목이 '평균 매수 단가'로 임시 표시되고 있습니다. (수익률 0%)")
 else:
     st.info("아직 보유한 주식이 없어요. 투자를 시작해 보세요!")
 
