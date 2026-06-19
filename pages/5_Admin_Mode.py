@@ -53,7 +53,7 @@ with tab_money:
                 st.rerun()
 
 with tab_user:
-    st.subheader("👤  참가자 이름 변경 및 삭제")
+    st.subheader("👤 참가자 이름 변경 및 삭제")
     if users_list:
         with st.form("rename_form"):
             st.write("✏️ **유저 이름 일괄 변경**")
@@ -110,10 +110,9 @@ with tab_shop:
 with tab_sys:
     st.subheader("⚙️ 시스템 마스터 제어실")
     
-    # 💡 [핵심 추가 장치] 부모님이 직접 원하는 환율 입력창 구현!
     with st.container(border=True):
         st.write("💵 **[부모님 전용] 현재 고정 환율 제어**")
-        st.write(f"현재 데이터베이스에 기록된 기본 환율: **{current_db_rate:,.2f} 원**")
+        st.write(f"현재 데이터베이스에 기록된 기준 환율: **{current_db_rate:,.2f} 원**")
         custom_rate = st.number_input("아이들 앱에 수동으로 강제 지정할 환율 입력 (원)", min_value=1000.0, max_value=2000.0, value=current_db_rate, step=1.0)
         
         if st.button("💱 입력한 환율로 금고 강제 세팅", use_container_width=True):
@@ -123,9 +122,9 @@ with tab_sys:
             st.rerun()
 
     st.write("---")
-    st.write("📈 **인터넷 실시간 주가 강제 수집기**")
-    if st.button("🔄 지금 즉시 야후 파이낸스 동기화 및 전 종목 현재가 저장", use_container_width=True):
-        with st.spinner("야후 검문소를 뚫고 실시간 주가 긁어오는 중... 잠시만 기다려주세요!"):
+    st.write("📈 **인터넷 실시간 주가 및 환율 강제 수집기**")
+    if st.button("🔄 지금 즉시 인터넷 동기화 및 전 종목 현재가/환율 저장", use_container_width=True):
+        with st.spinner("보안 검문소를 우회하여 최신 자산 데이터 수집 중..."):
             
             session = requests.Session()
             session.headers.update({
@@ -136,7 +135,7 @@ with tab_sys:
             fail_logs = []
             
             for stock in stock_data:
-                ticker = str(stock.get('티ker', stock.get('티커', ''))).strip()
+                ticker = str(stock.get('티커', '')).strip()
                 sid = stock.get('id')
                 name = str(stock.get('종목명', ''))
                 
@@ -151,26 +150,29 @@ with tab_sys:
                                 
                         if val > 0:
                             supabase.table("stocks").update({"현재가": val}).eq("id", sid).execute()
-                            success_logs.append(f"✅ {name} ({ticker}): {val:,.2f} 성공")
-                        else: fail_logs.append(f"❌ {name} ({ticker}): 0원 반환됨")
-                    except Exception as e: fail_logs.append(f"❌ {name} ({ticker}): 에러 ({str(e)})")
+                            success_logs.append(f"✅ {name} ({ticker}): {val:,.2f} 원격 저장 완료")
+                        else: fail_logs.append(f"❌ {name} ({ticker}): 주가 데이터 수신 실패")
+                    except Exception as e: fail_logs.append(f"❌ {name} ({ticker}): 통신 지연 ({str(e)})")
             
-            # 환율 자동 업데이트 시도
+            # 💡 버튼 클릭 시에도 공인 환율 API를 통해 완벽하게 최신 환율 강제 자동 수집
             try:
-                t_rate = yf.Ticker("USDKRW=X", session=session)
-                rate = float(t_rate.fast_info['last_price'])
-                if rate > 1000: 
-                    supabase.table("system_settings").update({"value": str(rate)}).eq("key", "exchange_rate").execute()
-                    success_logs.append(f"✅ 환율 자동 수집 성공: {rate:,.2f}원")
-            except Exception as e: fail_logs.append(f"❌ 환율 수집 실패 (기존 고정환율 유지)")
+                response = requests.get("https://open.er-api.com/v6/latest/USD")
+                if response.status_code == 200:
+                    exchange_data = response.json()
+                    rate = float(exchange_data["rates"]["KRW"])
+                    if rate > 1000:
+                        supabase.table("system_settings").update({"value": str(rate)}).eq("key", "exchange_rate").execute()
+                        success_logs.append(f"✅ 환율 공인 오픈 API 실시간 수집 성공: {rate:,.2f}원")
+            except Exception as e: 
+                fail_logs.append(f"❌ 환율 수집 통신 오류 (기존 금고 환율 유지)")
             
             today_date = datetime.now().strftime("%Y-%m-%d")
             supabase.table("system_settings").update({"value": today_date}).eq("key", "last_stock_update").execute()
             st.session_state.db_loaded = False
             
             if success_logs:
-                st.success("🎉 주가 저장이 완료되었습니다!")
+                st.success("🎉 실시간 자산 정보 동기화가 완료되었습니다!")
                 for log in success_logs: st.write(log)
             if fail_logs:
-                st.error("🚨 아래 종목들은 데이터를 가져오지 못했습니다.")
+                st.error("🚨 아래 항목들은 가져오지 못했습니다.")
                 for log in fail_logs: st.write(log)
