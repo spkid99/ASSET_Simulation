@@ -27,11 +27,14 @@ try:
     balance_data = supabase.table("balance").select("*").execute().data
     purchases_data = supabase.table("purchases").select("*").execute().data
     stock_data = supabase.table("stocks").select("*").execute().data
+    settings_data = supabase.table("system_settings").select("*").execute().data
 except Exception as e:
     st.error("DB 접속 에러")
     st.stop()
 
 users_list = [str(r.get('사용자', '')).strip() for r in balance_data if r.get('사용자', '')]
+settings_dict = {r.get('key'): r.get('value') for r in settings_data}
+current_db_rate = float(settings_dict.get('exchange_rate', '1385.0'))
 
 tab_money, tab_user, tab_shop, tab_sys = st.tabs(["💰 용돈 지급", "👤 유저 관리", "📦 상점 물류", "⚙️ 시스템 마스터 제어"])
 
@@ -50,7 +53,7 @@ with tab_money:
                 st.rerun()
 
 with tab_user:
-    st.subheader("👤 참가자 이름 변경 및 삭제")
+    st.subheader("👤  참가자 이름 변경 및 삭제")
     if users_list:
         with st.form("rename_form"):
             st.write("✏️ **유저 이름 일괄 변경**")
@@ -105,64 +108,69 @@ with tab_shop:
                     else: st.button("✅ 처리완료", disabled=True, key=f"done_{p_id}", use_container_width=True)
 
 with tab_sys:
-    st.subheader("📈 [부모님 전용] 실시간 주가 강제 업데이트 시스템")
-    st.write("자동으로 하루 1회 고정되지만, 지금 즉시 주가를 새로 고치고 싶다면 아래 버튼을 누르세요.")
+    st.subheader("⚙️ 시스템 마스터 제어실")
+    
+    # 💡 [핵심 추가 장치] 부모님이 직접 원하는 환율 입력창 구현!
+    with st.container(border=True):
+        st.write("💵 **[부모님 전용] 현재 고정 환율 제어**")
+        st.write(f"현재 데이터베이스에 기록된 기본 환율: **{current_db_rate:,.2f} 원**")
+        custom_rate = st.number_input("아이들 앱에 수동으로 강제 지정할 환율 입력 (원)", min_value=1000.0, max_value=2000.0, value=current_db_rate, step=1.0)
+        
+        if st.button("💱 입력한 환율로 금고 강제 세팅", use_container_width=True):
+            supabase.table("system_settings").update({"value": str(custom_rate)}).eq("key", "exchange_rate").execute()
+            st.session_state.db_loaded = False
+            st.success(f"🎯 환율이 {custom_rate:,.1f}원으로 강제 고정되었습니다. 홈 화면을 새로고침 하세요!")
+            st.rerun()
+
+    st.write("---")
+    st.write("📈 **인터넷 실시간 주가 강제 수집기**")
     if st.button("🔄 지금 즉시 야후 파이낸스 동기화 및 전 종목 현재가 저장", use_container_width=True):
         with st.spinner("야후 검문소를 뚫고 실시간 주가 긁어오는 중... 잠시만 기다려주세요!"):
             
             session = requests.Session()
             session.headers.update({
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-                "Accept": "*/*",
-                "Accept-Encoding": "gzip, deflate, br"
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
             })
             
             success_logs = []
             fail_logs = []
             
             for stock in stock_data:
-                ticker = str(stock.get('티커', '')).strip()
+                ticker = str(stock.get('티ker', stock.get('티커', ''))).strip()
                 sid = stock.get('id')
                 name = str(stock.get('종목명', ''))
                 
                 if ticker:
                     try:
-                        # 💡 가장 가벼운 fast_info로 우회 시도
                         t = yf.Ticker(ticker, session=session)
                         val = 0.0
-                        try:
-                            val = float(t.fast_info['last_price'])
+                        try: val = float(t.fast_info['last_price'])
                         except:
-                            # 실패 시 일반 history로 2차 시도
                             hist = t.history(period="1d")
-                            if not hist.empty:
-                                val = float(hist['Close'].iloc[-1])
+                            if not hist.empty: val = float(hist['Close'].iloc[-1])
                                 
                         if val > 0:
                             supabase.table("stocks").update({"현재가": val}).eq("id", sid).execute()
                             success_logs.append(f"✅ {name} ({ticker}): {val:,.2f} 성공")
-                        else:
-                            fail_logs.append(f"❌ {name} ({ticker}): 0원 반환됨 (티커 오류이거나 야후 차단)")
-                    except Exception as e:
-                        fail_logs.append(f"❌ {name} ({ticker}): 에러 발생 ({str(e)})")
+                        else: fail_logs.append(f"❌ {name} ({ticker}): 0원 반환됨")
+                    except Exception as e: fail_logs.append(f"❌ {name} ({ticker}): 에러 ({str(e)})")
             
-            # 환율 업데이트
+            # 환율 자동 업데이트 시도
             try:
                 t_rate = yf.Ticker("USDKRW=X", session=session)
                 rate = float(t_rate.fast_info['last_price'])
-                if rate > 0: 
-                    st.session_state.exchange_rate = rate
-                    success_logs.append(f"✅ 환율 (USDKRW=X): {rate:,.2f}원 성공")
-            except Exception as e: 
-                fail_logs.append(f"❌ 환율: 에러 발생 ({str(e)})")
+                if rate > 1000: 
+                    supabase.table("system_settings").update({"value": str(rate)}).eq("key", "exchange_rate").execute()
+                    success_logs.append(f"✅ 환율 자동 수집 성공: {rate:,.2f}원")
+            except Exception as e: fail_logs.append(f"❌ 환율 수집 실패 (기존 고정환율 유지)")
             
             today_date = datetime.now().strftime("%Y-%m-%d")
             supabase.table("system_settings").update({"value": today_date}).eq("key", "last_stock_update").execute()
             st.session_state.db_loaded = False
             
             if success_logs:
-                st.success("🎉 아래 종목들의 주가 저장이 완료되었습니다!")
+                st.success("🎉 주가 저장이 완료되었습니다!")
                 for log in success_logs: st.write(log)
             if fail_logs:
-                st.error("🚨 아래 종목들은 데이터를 가져오지 못했습니다. 티커(종목코드)가 잘못되었는지 확인해 주세요.")
+                st.error("🚨 아래 종목들은 데이터를 가져오지 못했습니다.")
                 for log in fail_logs: st.write(log)
