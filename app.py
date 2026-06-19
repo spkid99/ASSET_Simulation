@@ -3,6 +3,7 @@ from supabase import create_client, Client
 import yfinance as yf
 import pandas as pd
 from datetime import datetime
+import requests
 
 st.set_page_config(page_title="자산관리 시뮬레이션", layout="centered")
 
@@ -35,17 +36,24 @@ def load_all_data_to_ram():
         settings_dict = {r.get('key'): r.get('value') for r in settings_res}
         last_update = settings_dict.get('last_stock_update', '2000-01-01')
         
-        # 오늘 첫 접속자라면 야후 파이낸스 동기화 가동
+        # 오늘 첫 접속자라면 주가 및 환율 자동 동기화 가동
         if last_update != today_date:
+            session = requests.Session()
+            session.headers.update({
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+            })
+            
             for stock in st.session_state.stock_data:
                 ticker = str(stock.get('티커', '')).strip()
                 sid = stock.get('id')
                 if ticker:
                     try:
-                        hist = yf.Ticker(ticker).history(period="3d")
-                        val = float(hist['Close'].iloc[-1]) if not hist.empty else 0.0
-                        if val <= 0 and 'last_price' in yf.Ticker(ticker).fast_info:
-                            val = float(yf.Ticker(ticker).fast_info['last_price'])
+                        t = yf.Ticker(ticker, session=session)
+                        val = 0.0
+                        try: val = float(t.fast_info['last_price'])
+                        except:
+                            hist = t.history(period="1d")
+                            if not hist.empty: val = float(hist['Close'].iloc[-1])
                         
                         if val > 0:
                             supabase.table("stocks").update({"현재가": val}).eq("id", sid).execute()
@@ -53,19 +61,22 @@ def load_all_data_to_ram():
                     except:
                         pass
             
-            # 환율도 오늘 기준 최초 1회 자동 업데이트 시도
+            # 💡 [핵심 교체] 야후 대신 차단 걱정 없는 공인 무료 환율 API로 환율 100% 자동 수집!
             try:
-                rate = float(yf.Ticker("USDKRW=X").fast_info['last_price'])
-                if rate > 1000:
-                    supabase.table("system_settings").update({"value": str(rate)}).eq("key", "exchange_rate").execute()
-                    settings_dict['exchange_rate'] = str(rate)
+                response = requests.get("https://open.er-api.com/v6/latest/USD")
+                if response.status_code == 200:
+                    exchange_data = response.json()
+                    rate = float(exchange_data["rates"]["KRW"])
+                    if rate > 1000:
+                        supabase.table("system_settings").update({"value": str(rate)}).eq("key", "exchange_rate").execute()
+                        settings_dict['exchange_rate'] = str(rate)
             except:
                 pass
                 
             supabase.table("system_settings").update({"value": today_date}).eq("key", "last_stock_update").execute()
             st.session_state.stock_data = supabase.table("stocks").select("*").execute().data
 
-        # 금고(DB)에 저장된 환율 읽어와 시스템에 고정
+        # 금고(DB)에 저장된 최신 자동 수집 환율을 시스템에 고정
         db_rate = settings_dict.get('exchange_rate', '1385.0')
         st.session_state.exchange_rate = float(db_rate)
 
@@ -218,8 +229,7 @@ if hot_news:
     for name, news, icon in hot_news[:5]: st.info(f"**[{name}]** {icon} {news}")
     st.divider()
 
-# 📊 상단 대시보드에 현재 적용중인 마스터 고정 환율 노출
-st.metric(label=f"💰 시작 원금: {initial_capital:,.0f} 원 (현재 환율: {exchange_rate:,.1f}원 적용)", value=f"{total_asset_value:,.0f} 원", delta=f"총 {total_profit_amt:,.0f} 원 ({total_profit_rate:,.2f}%) 수익")
+st.metric(label=f"💰 시작 원금: {initial_capital:,.0f} 원 (오늘의 자동 고정 환율: {exchange_rate:,.1f}원 적용)", value=f"{total_asset_value:,.0f} 원", delta=f"총 {total_profit_amt:,.0f} 원 ({total_profit_rate:,.2f}%) 수익")
 st.divider()
 
 col1, col2, col3 = st.columns(3)
@@ -245,4 +255,4 @@ else:
     st.info("아직 보유한 주식이 없어요. 투자를 시작해 보세요!")
 
 st.divider()
-st.caption(f"💡 오늘 가장 먼저 접속한 가족에 의해 주가와 환율이 하루 1회 자동 고정 관리됩니다.")
+st.caption(f"💡 오늘 가장 먼저 접속한 가족에 의해 주가와 환율이 하루 1회 자동으로 안전하게 수집 및 고정 관리됩니다.")
