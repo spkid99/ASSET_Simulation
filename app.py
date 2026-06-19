@@ -23,34 +23,60 @@ def init_connection() -> Client:
 def load_all_data_to_ram():
     try:
         supabase = init_connection()
+        
+        # 1. 수파베이스 기본 데이터 초고속 로드
         st.session_state.balance_data = supabase.table("balance").select("*").execute().data
         st.session_state.history_data = supabase.table("history").select("*").execute().data
         st.session_state.stock_data = supabase.table("stocks").select("*").execute().data
         
+        # 2. 📅 [하루 1회 자동 주가 갱신 스케줄러]
+        today_date = datetime.now().strftime("%Y-%m-%d")
+        
+        settings_res = supabase.table("system_settings").select("*").eq("key", "last_stock_update").execute().data
+        last_update = settings_res[0].get('value', '2000-01-01') if settings_res else '2000-01-01'
+        
+        # 오늘 날짜와 마지막 업데이트 날짜가 다르면 -> 오늘 첫 접속자임! 야후 가동!
+        if last_update != today_date:
+            for stock in st.session_state.stock_data:
+                ticker = str(stock.get('티커', '')).strip()
+                sid = stock.get('id')
+                if ticker:
+                    try:
+                        hist = yf.Ticker(ticker).history(period="5d")
+                        val = float(hist['Close'].iloc[-1]) if not hist.empty else 0.0
+                        if val <= 0 and 'last_price' in yf.Ticker(ticker).fast_info:
+                            val = float(yf.Ticker(ticker).fast_info['last_price'])
+                        
+                        if val > 0:
+                            # 금고(DB)에 주가 영구 저장
+                            supabase.table("stocks").update({"현재가": val}).eq("id", sid).execute()
+                            stock['현재가'] = val
+                    except:
+                        pass
+            
+            # 환율도 오늘 기준 최초 1회 업데이트
+            try:
+                rate = float(yf.Ticker("USDKRW=X").fast_info['last_price'])
+                if rate > 0: st.session_state.exchange_rate = rate
+            except:
+                pass
+                
+            # 오늘 도장 쾅 찍기! (이후 접속자들은 야후 통신 스킵)
+            supabase.table("system_settings").update({"value": today_date}).eq("key", "last_stock_update").execute()
+            st.session_state.stock_data = supabase.table("stocks").select("*").execute().data
+
+        # 3. 평소에는 야후를 절대 부르지 않고 금고(DB)에 저장된 현재가만 0.001초만에 메모리에 로드
         for stock in st.session_state.stock_data:
             ticker = str(stock.get('티커', '')).strip()
-            if ticker and ticker not in st.session_state.prices:
-                try:
-                    hist = yf.Ticker(ticker).history(period="5d")
-                    val = float(hist['Close'].iloc[-1]) if not hist.empty else 0.0
-                    if val <= 0 and 'last_price' in yf.Ticker(ticker).fast_info:
-                        val = float(yf.Ticker(ticker).fast_info['last_price'])
-                    st.session_state.prices[ticker] = val if val > 0 else 0.0
-                except:
-                    st.session_state.prices[ticker] = 0.0
-                    
-        try:
-            rate = float(yf.Ticker("USDKRW=X").fast_info['last_price'])
-            st.session_state.exchange_rate = rate if rate > 0 else 1350.0
-        except:
-            pass
+            db_price = float(stock.get('현재가', 0))
+            st.session_state.prices[ticker] = db_price
             
         st.session_state.db_loaded = True
     except Exception as e:
-        st.error(f"초기 데이터 로딩 실패: {e}")
+        st.error(f"데이터베이스 통신 실패: {e}")
 
 if not st.session_state.db_loaded:
-    with st.spinner("🚀 클라우드 DB 연결 및 초고속 로딩 중..."):
+    with st.spinner("🚀 클라우드 안전 금고 연결 중..."):
         load_all_data_to_ram()
 
 balance_data = st.session_state.balance_data
@@ -91,7 +117,7 @@ if not st.session_state.user_id:
                     supabase.table("balance").insert({"사용자": new_user_input, "현금잔액": 1000000, "예금잔액": 0, "초기자본금": 1000000}).execute()
                     st.session_state.db_loaded = False 
                     st.session_state.user_id = new_user_input
-                    st.success(f"🎉 {new_user_input}님의 금고 개설 완료! 새로고침 해주세요.")
+                    st.success(f"🎉 {new_user_input}님의 금고 개설 완료!")
                     st.rerun()
     st.stop()
 
@@ -129,7 +155,6 @@ def get_user_portfolio():
 user_portfolio = get_user_portfolio()
 stock_details = []
 total_stock_value = 0.0
-price_error_flag = False
 
 for name, data in user_portfolio.items():
     ticker = ticker_map.get(name, "")
@@ -137,16 +162,14 @@ for name, data in user_portfolio.items():
     
     raw_price = prices_cache.get(ticker, 0.0)
     
-    # 💡 [핵심 수정 부분] 야후 서버 지연 시 환율 중복 계산 원천 차단!
+    # 💡 야후 지연 시 환율 버그 원천 수정 완료!
     if raw_price > 0:
         current_price = raw_price if is_korean else raw_price * exchange_rate
     else:
-        price_error_flag = True
         current_price = (data['total_buy_cost'] / data['qty']) if data['qty'] > 0 else 0.0
         
     qty = data['qty']
     total_buy_cost = data['total_buy_cost']
-    
     stock_value = current_price * qty
     
     if pd.isna(stock_value): stock_value = 0.0
@@ -171,7 +194,6 @@ total_asset_value = current_cash + current_deposit + total_stock_value
 total_profit_amt = total_asset_value - initial_capital
 total_profit_rate = (total_profit_amt / initial_capital * 100) if initial_capital > 0 else 0
 if pd.isna(total_profit_rate): total_profit_rate = 0.0
-today_str = datetime.now().strftime("%Y년 %m월 %d일 기준")
 
 col_title, col_logout = st.columns([4, 1])
 with col_title: st.title(f"🏢 {current_user}의 자산관리")
@@ -217,13 +239,8 @@ if stock_details:
         st.dataframe(styled_df, hide_index=True, use_container_width=True)
     except:
         st.dataframe(df_owned, hide_index=True, use_container_width=True)
-        
-    if price_error_flag:
-        st.warning("⚠️ 야후 파이낸스 서버 지연으로 일부 종목이 '평균 매수 단가'로 임시 표시되고 있습니다. (수익률 0%)")
 else:
     st.info("아직 보유한 주식이 없어요. 투자를 시작해 보세요!")
 
 st.divider()
-if st.button("🔄 실시간 주가 새로고침 (서버 동기화)", use_container_width=True):
-    st.session_state.db_loaded = False
-    st.rerun()
+st.caption(f"💡 오늘 가장 먼저 접속한 가족에 의해 주가가 하루 1회 자동 고정 관리됩니다.")
