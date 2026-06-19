@@ -12,7 +12,7 @@ if "db_loaded" not in st.session_state:
     st.session_state.history_data = []
     st.session_state.stock_data = []
     st.session_state.prices = {}
-    st.session_state.exchange_rate = 1350.0
+    st.session_state.exchange_rate = 1385.0
 
 @st.cache_resource(ttl=3600)
 def init_connection() -> Client:
@@ -24,52 +24,54 @@ def load_all_data_to_ram():
     try:
         supabase = init_connection()
         
-        # 1. 수파베이스 기본 데이터 초고속 로드
         st.session_state.balance_data = supabase.table("balance").select("*").execute().data
         st.session_state.history_data = supabase.table("history").select("*").execute().data
         st.session_state.stock_data = supabase.table("stocks").select("*").execute().data
         
-        # 2. 📅 [하루 1회 자동 주가 갱신 스케줄러]
+        # 📅 하루 1회 자동 주가 및 환율 갱신 스케줄러
         today_date = datetime.now().strftime("%Y-%m-%d")
+        settings_res = supabase.table("system_settings").select("*").execute().data
         
-        settings_res = supabase.table("system_settings").select("*").eq("key", "last_stock_update").execute().data
-        last_update = settings_res[0].get('value', '2000-01-01') if settings_res else '2000-01-01'
+        settings_dict = {r.get('key'): r.get('value') for r in settings_res}
+        last_update = settings_dict.get('last_stock_update', '2000-01-01')
         
-        # 오늘 날짜와 마지막 업데이트 날짜가 다르면 -> 오늘 첫 접속자임! 야후 가동!
+        # 오늘 첫 접속자라면 야후 파이낸스 동기화 가동
         if last_update != today_date:
             for stock in st.session_state.stock_data:
                 ticker = str(stock.get('티커', '')).strip()
                 sid = stock.get('id')
                 if ticker:
                     try:
-                        hist = yf.Ticker(ticker).history(period="5d")
+                        hist = yf.Ticker(ticker).history(period="3d")
                         val = float(hist['Close'].iloc[-1]) if not hist.empty else 0.0
                         if val <= 0 and 'last_price' in yf.Ticker(ticker).fast_info:
                             val = float(yf.Ticker(ticker).fast_info['last_price'])
                         
                         if val > 0:
-                            # 금고(DB)에 주가 영구 저장
                             supabase.table("stocks").update({"현재가": val}).eq("id", sid).execute()
                             stock['현재가'] = val
                     except:
                         pass
             
-            # 환율도 오늘 기준 최초 1회 업데이트
+            # 환율도 오늘 기준 최초 1회 자동 업데이트 시도
             try:
                 rate = float(yf.Ticker("USDKRW=X").fast_info['last_price'])
-                if rate > 0: st.session_state.exchange_rate = rate
+                if rate > 1000:
+                    supabase.table("system_settings").update({"value": str(rate)}).eq("key", "exchange_rate").execute()
+                    settings_dict['exchange_rate'] = str(rate)
             except:
                 pass
                 
-            # 오늘 도장 쾅 찍기! (이후 접속자들은 야후 통신 스킵)
             supabase.table("system_settings").update({"value": today_date}).eq("key", "last_stock_update").execute()
             st.session_state.stock_data = supabase.table("stocks").select("*").execute().data
 
-        # 3. 평소에는 야후를 절대 부르지 않고 금고(DB)에 저장된 현재가만 0.001초만에 메모리에 로드
+        # 금고(DB)에 저장된 환율 읽어와 시스템에 고정
+        db_rate = settings_dict.get('exchange_rate', '1385.0')
+        st.session_state.exchange_rate = float(db_rate)
+
         for stock in st.session_state.stock_data:
             ticker = str(stock.get('티커', '')).strip()
-            db_price = float(stock.get('현재가', 0))
-            st.session_state.prices[ticker] = db_price
+            st.session_state.prices[ticker] = float(stock.get('현재가', 0))
             
         st.session_state.db_loaded = True
     except Exception as e:
@@ -162,7 +164,6 @@ for name, data in user_portfolio.items():
     
     raw_price = prices_cache.get(ticker, 0.0)
     
-    # 💡 야후 지연 시 환율 버그 원천 수정 완료!
     if raw_price > 0:
         current_price = raw_price if is_korean else raw_price * exchange_rate
     else:
@@ -217,7 +218,8 @@ if hot_news:
     for name, news, icon in hot_news[:5]: st.info(f"**[{name}]** {icon} {news}")
     st.divider()
 
-st.metric(label=f"💰 시작 원금: {initial_capital:,.0f} 원", value=f"{total_asset_value:,.0f} 원", delta=f"총 {total_profit_amt:,.0f} 원 ({total_profit_rate:,.2f}%) 수익")
+# 📊 상단 대시보드에 현재 적용중인 마스터 고정 환율 노출
+st.metric(label=f"💰 시작 원금: {initial_capital:,.0f} 원 (현재 환율: {exchange_rate:,.1f}원 적용)", value=f"{total_asset_value:,.0f} 원", delta=f"총 {total_profit_amt:,.0f} 원 ({total_profit_rate:,.2f}%) 수익")
 st.divider()
 
 col1, col2, col3 = st.columns(3)
@@ -243,4 +245,4 @@ else:
     st.info("아직 보유한 주식이 없어요. 투자를 시작해 보세요!")
 
 st.divider()
-st.caption(f"💡 오늘 가장 먼저 접속한 가족에 의해 주가가 하루 1회 자동 고정 관리됩니다.")
+st.caption(f"💡 오늘 가장 먼저 접속한 가족에 의해 주가와 환율이 하루 1회 자동 고정 관리됩니다.")
