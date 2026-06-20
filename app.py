@@ -211,7 +211,7 @@ else:
     st.info("아직 보유한 주식이 없어요. 투자를 시작해 보세요!")
 
 st.divider()
-st.caption(f"💡 앱의 모든 실시간 주가와 환율은 부모님(관리자 모드)의 통제하에 안정적으로 연동됩니다.")
+st.caption(f"💡 앱의 모든 실시간 주가와 환율은 관리자의 통제하에 안정적으로 연동됩니다.")
 if st.button("🔄 내 자산 새로고침", use_container_width=True):
     st.session_state.db_loaded = False
     st.rerun()
