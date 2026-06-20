@@ -3,7 +3,7 @@ from supabase import create_client, Client
 import pandas as pd
 from datetime import datetime
 
-st.set_page_config(page_title="가족 투자 시상식 & 랭킹", layout="centered")
+st.set_page_config(page_title="Masters Investment 시상식 & 랭킹", layout="centered")
 
 if "db_loaded" not in st.session_state or not st.session_state.db_loaded:
     st.warning("💡 최신 랭킹과 시상식을 보려면 먼저 메인 홈 화면(app.py)을 한 번 열어주세요!")
@@ -99,10 +99,10 @@ for user_row in balance_data:
     })
 
 # --- 🖥️ 화면 UI 구성 ---
-st.title("🏆 가족 투자 시상식")
+st.title("🏆 Masters Investment 시상식")
 with st.container(border=True):
-    st.write("🎉 **[시상식 안내] 매월 마지막 주 토요일은 가족 시상식 날입니다!**")
-    st.write("우리 가족 중 가장 뛰어난 성과와 올바른 투자 습관을 보여준 사람에게 멋진 상과 상품이 수여됩니다. 매월 4가지 상표 중 하나의 부문만 돌아가며 시상하니, 목표를 세워 도전해 보세요!")
+    st.write("🎉 **[시상식 안내] 매월 마지막 주 토요일은 시상식 날입니다!**")
+    st.write("유저 중 가장 뛰어난 성과와 올바른 투자 습관을 보여준 사람에게 멋진 상과 상품이 수여됩니다. 매월 4가지 상표 중 하나의 부문만 돌아가며 시상하니, 목표를 세워 도전해 보세요!")
 
 st.divider()
 
@@ -119,9 +119,9 @@ rank_longterm = df_rank.sort_values(by='최장보유일', ascending=False).to_di
 
 tab1, tab2, tab3, tab4 = st.tabs([
     "📈 최고의 투자자 (1,5,9월)", 
-    "👑 우리집 자산가 (2,6,10월)", 
+    "👑 월스트리스 큰손 상 (2,6,10월)", 
     "🏛️ 티끌모아 태산 (3,7,11월)", 
-    "💎 장기보유에 대한 상 (4,8,12월)"
+    "💎 다이아몬드 핸즈 상 (4,8,12월)"
 ])
 
 medals = ["🥇", "🥈", "🥉", "🏅", "🏅"]
@@ -141,7 +141,7 @@ with tab1:
                 st.caption(f"총 자산 가치: {u['총자산']:,.0f} 원 (수익금: {u['수익금']:,.0f} 원)")
 
 with tab2:
-    st.subheader("👑 우리집 자산가 상")
+    st.subheader("👑 월스트리스 큰손 상")
     st.info("📅 **시상월:** 2월, 6월, 10월 | 🎁 **당첨 상품:** 💰 보너스 용돈 5,000원 (진짜 용돈!)")
     st.caption("현금, 예금, 주식 평가액을 모두 합쳐 현재 가족 중 가장 많은 자산을 축적한 부자에게 수여합니다.")
     for i, u in enumerate(rank_asset[:5]):
@@ -167,7 +167,7 @@ with tab3:
                 st.caption(f"안전하게 지켜낸 나만의 든든한 금고!")
 
 with tab4:
-    st.subheader("💎 장기보유에 대한 상")
+    st.subheader("💎 다이아몬드 핸즈 상")
     st.info("📅 **시상월:** 4월, 8월, 12월 | 🎁 **당첨 상품:** 🍕 저녁 메뉴 선택권")
     st.caption("주식의 흔들림에도 팔지 않고 진득하게 가장 오랫동안 주식을 보유한 멘탈 갑(甲) 장기투자자에게 수여합니다.")
     for i, u in enumerate(rank_longterm[:5]):
