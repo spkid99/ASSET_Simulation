@@ -13,6 +13,7 @@ if "db_loaded" not in st.session_state:
     st.session_state.history_data = []
     st.session_state.stock_data = []
     st.session_state.prices = {}
+    st.session_state.prices_1m_ago = {}
     st.session_state.exchange_rate = 1385.0
 
 @st.cache_resource(ttl=3600)
@@ -29,14 +30,12 @@ def load_all_data_to_ram():
         st.session_state.history_data = supabase.table("history").select("*").execute().data
         st.session_state.stock_data = supabase.table("stocks").select("*").execute().data
         
-        # 📅 하루 1회 자동 주가 및 환율 갱신 스케줄러
         today_date = datetime.now().strftime("%Y-%m-%d")
         settings_res = supabase.table("system_settings").select("*").execute().data
         
         settings_dict = {r.get('key'): r.get('value') for r in settings_res}
         last_update = settings_dict.get('last_stock_update', '2000-01-01')
         
-        # 오늘 첫 접속자라면 주가 및 환율 자동 동기화 가동
         if last_update != today_date:
             session = requests.Session()
             session.headers.update({
@@ -48,20 +47,22 @@ def load_all_data_to_ram():
                 sid = stock.get('id')
                 if ticker:
                     try:
+                        # 💡 1달 전 데이터를 추출하기 위해 2달치 역사 데이터 수집
                         t = yf.Ticker(ticker, session=session)
-                        val = 0.0
-                        try: val = float(t.fast_info['last_price'])
-                        except:
-                            hist = t.history(period="1d")
-                            if not hist.empty: val = float(hist['Close'].iloc[-1])
+                        hist = t.history(period="2mo")
                         
-                        if val > 0:
-                            supabase.table("stocks").update({"현재가": val}).eq("id", sid).execute()
-                            stock['현재가'] = val
+                        if not hist.empty:
+                            val_now = float(hist['Close'].iloc[-1])
+                            # 주식 시장 개장일 기준 약 22일 전이 한 달 전입니다.
+                            val_1m = float(hist['Close'].iloc[-22]) if len(hist) >= 22 else float(hist['Close'].iloc[0])
+                            
+                            if val_now > 0 and val_1m > 0:
+                                supabase.table("stocks").update({"현재가": val_now, "한달전주가": val_1m}).eq("id", sid).execute()
+                                stock['현재가'] = val_now
+                                stock['한달전주가'] = val_1m
                     except:
                         pass
             
-            # 💡 [핵심 교체] 야후 대신 차단 걱정 없는 공인 무료 환율 API로 환율 100% 자동 수집!
             try:
                 response = requests.get("https://open.er-api.com/v6/latest/USD")
                 if response.status_code == 200:
@@ -76,13 +77,13 @@ def load_all_data_to_ram():
             supabase.table("system_settings").update({"value": today_date}).eq("key", "last_stock_update").execute()
             st.session_state.stock_data = supabase.table("stocks").select("*").execute().data
 
-        # 금고(DB)에 저장된 최신 자동 수집 환율을 시스템에 고정
         db_rate = settings_dict.get('exchange_rate', '1385.0')
         st.session_state.exchange_rate = float(db_rate)
 
         for stock in st.session_state.stock_data:
             ticker = str(stock.get('티커', '')).strip()
             st.session_state.prices[ticker] = float(stock.get('현재가', 0))
+            st.session_state.prices_1m_ago[ticker] = float(stock.get('한달전주가', 0))
             
         st.session_state.db_loaded = True
     except Exception as e:
