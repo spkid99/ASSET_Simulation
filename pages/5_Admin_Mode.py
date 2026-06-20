@@ -9,7 +9,7 @@ st.set_page_config(page_title="부모님 전용 관리자 모드", layout="wide"
 
 st.title("⚙️ 부모님 전용 관리자 모드")
 pwd = st.text_input("관리자 비밀번호를 입력하세요", type="password")
-if pwd != "0000":
+if pwd != "4814":
     st.warning("🔒 올바른 관리자 비밀번호를 입력해야 제어 장치가 활성화됩니다.")
     st.stop()
 
