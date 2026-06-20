@@ -4,6 +4,7 @@ import yfinance as yf
 import pandas as pd
 from datetime import datetime
 import requests
+import io
 
 st.set_page_config(page_title="부모님 전용 관리자 모드", layout="wide")
 
@@ -36,8 +37,10 @@ users_list = [str(r.get('사용자', '')).strip() for r in balance_data if r.get
 settings_dict = {r.get('key'): r.get('value') for r in settings_data}
 current_db_rate = float(settings_dict.get('exchange_rate', '1385.0'))
 
-# 💡 [새로운 탭 추가] 엑셀형 뉴스 일괄 편집 탭 생성
-tab_money, tab_user, tab_shop, tab_news, tab_sys = st.tabs(["💰 용돈 지급", "👤 유저 관리", "📦 상점 물류", "📰 주식/뉴스 일괄 편집", "⚙️ 시스템 제어"])
+# 💡 탭 이름을 '종목 마스터 관리'로 더욱 직관적으로 변경했습니다.
+tab_money, tab_user, tab_shop, tab_stock_manage, tab_sys = st.tabs([
+    "💰 용돈 지급", "👤 유저 관리", "📦 상점 물류", "📦 종목 마스터 관리", "⚙️ 시스템 제어"
+])
 
 with tab_money:
     st.subheader("🎁 자산 강제 주입 (보너스 지급)")
@@ -54,7 +57,7 @@ with tab_money:
                 st.rerun()
 
 with tab_user:
-    st.subheader("👤 참가자 이름 변경 및 삭제")
+    st.subheader("👤  참가자 이름 변경 및 삭제")
     if users_list:
         with st.form("rename_form"):
             st.write("✏️ **유저 이름 일괄 변경**")
@@ -108,41 +111,92 @@ with tab_shop:
                             st.rerun()
                     else: st.button("✅ 처리완료", disabled=True, key=f"done_{p_id}", use_container_width=True)
 
-# 💡 [핵심 기능] 엑셀처럼 표에서 바로 글자를 치거나 복사/붙여넣기 할 수 있는 마법의 공간!
-with tab_news:
-    st.subheader("📰 구글 시트형 뉴스 일괄 편집기")
-    st.info("💡 **사용 꿀팁:** 구글 시트나 엑셀에서 내용 여러 줄을 복사(Ctrl+C)한 뒤, 아래 표의 빈칸을 한 번 클릭하고 **붙여넣기(Ctrl+V)** 하시면 한꺼번에 쏙 들어갑니다!")
+# 💡 [집중 구현] 엑셀 대량 붙여넣기 기능 및 단건 편집 통합 제어실
+with tab_stock_manage:
+    sub_tab1, sub_tab2 = st.tabs(["📋 엑셀 통째로 붙여넣기 (종목 리스트 리셋)", "✏️ 개별 뉴스/태그 간편 수정"])
     
-    if stock_data:
-        df_stocks = pd.DataFrame(stock_data)
+    with sub_tab1:
+        st.subheader("🚀 주식 종목 리스트 엑셀 일괄 교체 시스템")
+        st.warning("⚠️ 주의: 여기에 데이터를 붙여넣고 실행하면 기존 수파베이스의 종목 리스트가 전체 삭제된 후 새 리스트로 완벽히 교체됩니다! (현재가는 우선 전부 0원으로 초기화됩니다)")
         
-        # 편집하기 쉽게 순서를 정렬하고 필요한 칸만 남깁니다.
-        edit_cols = ['id', '종목명', '티커', '최근뉴스', '뉴스평가', '핫한뉴스선정']
-        df_edit = df_stocks[edit_cols].copy()
+        # 안내 가이드 텍스트
+        st.markdown("""
+        **구글 시트나 엑셀에서 아래 7개 열(헤더 이름 포함)을 드래그하여 복사(Ctrl+C)한 후 아래 상자에 붙여넣으세요(Ctrl+V).**
+        `카테고리`	`종목명`	`티커`	`설명`	`최근뉴스`	`핫한뉴스선정`	`뉴스평가`
+        """)
         
-        # Streamlit의 강력한 data_editor 기능 활용 (마치 엑셀처럼 작동합니다)
-        edited_df = st.data_editor(
-            df_edit,
-            disabled=['id', '종목명', '티커'], # 이 세 칸은 실수로 건드리지 못하게 잠금!
-            hide_index=True,
-            use_container_width=True,
-            height=400
-        )
+        pasted_text = st.text_area("엑셀에서 복사한 테이블 데이터를 여기에 붙여넣으세요.", height=250, placeholder="카테고리\t종목명\t티커\t설명\t최근뉴스\t핫한뉴스선정\t뉴스평가\n미국주식\t테슬라\tTSLA\t전기차 제조사\t일론머스크 신제품 발표\tO\t호재")
         
-        st.write("")
-        if st.button("💾 위에서 수정한 표 내용 전체 수파베이스에 일괄 덮어쓰기", type="primary", use_container_width=True):
-            with st.spinner("클라우드 금고에 일괄 업데이트 중..."):
-                for index, row in edited_df.iterrows():
-                    sid = row['id']
-                    supabase.table("stocks").update({
-                        "최근뉴스": str(row['최근뉴스']).strip(),
-                        "뉴스평가": str(row['뉴스평가']).strip(),
-                        "핫한뉴스선정": str(row['핫한뉴스선정']).strip()
-                    }).eq("id", sid).execute()
-                
-                st.session_state.db_loaded = False
-                st.success("🎉 모든 뉴스가 성공적으로 일괄 업데이트 되었습니다! 홈 화면을 확인해 보세요.")
-                st.rerun()
+        if st.button("🔥 위 데이터로 수파베이스 종목 전체 리셋 및 교체 실행", type="primary", use_container_width=True):
+            if not pasted_text.strip():
+                st.error("❌ 붙여넣은 텍스트 데이터가 없습니다.")
+            else:
+                try:
+                    # 엑셀/구글시트의 복사 데이터는 탭(\t)으로 구분된 TSV 문자열입니다.
+                    df_pasted = pd.read_csv(io.StringIO(pasted_text.strip()), sep='\t')
+                    
+                    required_cols = ['카테고리', '종목명', '티커', '설명', '최근뉴스', '핫한뉴스선정', '뉴스평가']
+                    missing_cols = [c for c in required_cols if c not in df_pasted.columns]
+                    
+                    if missing_cols:
+                        st.error(f"❌ 헤더(열 이름)가 일치하지 않습니다. 필수 기입 헤더: {missing_cols}")
+                    else:
+                        with st.spinner("수파베이스 클라우드 금고 비우는 중..."):
+                            # 기존 stocks 테이블의 모든 데이터 영구 삭제
+                            supabase.table("stocks").delete().neq("id", -1).execute()
+                        
+                        with st.spinner("새로운 엑셀 종목 대량 주입 중 (현재가 0 세팅)..."):
+                            insert_rows = []
+                            for _, row in df_pasted.iterrows():
+                                insert_rows.append({
+                                    "카테고리": str(row['카테고리']).strip(),
+                                    "종목명": str(row['종목명']).strip(),
+                                    "티커": str(row['티커']).strip(),
+                                    "설명": str(row['설명']).strip(),
+                                    "최근뉴스": str(row['최근뉴스']).strip() if pd.notna(row['최근뉴스']) else "",
+                                    "핫한뉴스선정": str(row['핫한뉴스선정']).strip() if pd.notna(row['핫한뉴스선정']) else "",
+                                    "뉴스평가": str(row['뉴스평가']).strip() if pd.notna(row['뉴스평가']) else "",
+                                    "현재가": 0.0 # 🎯 요청하신 대로 최초 현재가는 전부 0원으로 깨끗하게 세팅!
+                                })
+                            
+                            if insert_rows:
+                                supabase.table("stocks").insert(insert_rows).execute()
+                        
+                        st.session_state.db_loaded = False
+                        st.success("🎉 종목 리스트가 성공적으로 리셋 및 전체 교체되었습니다! 다음 탭에서 실시간 주가를 한 번 동기화해 주세요.")
+                        st.rerun()
+                except Exception as ex:
+                    st.error(f"❌ 데이터 파싱 중 오류가 발생했습니다. 행/열 배치를 확인해 주세요. 오류 내용: {ex}")
+                    
+    with sub_tab2:
+        st.subheader("📰 구글 시트형 뉴스/태그 간편 편집기")
+        st.caption("주가를 0원으로 초기화하지 않고, 기존 종목들의 최근 뉴스와 아이콘 태그만 엑셀처럼 빠르게 수정할 때 사용합니다.")
+        if stock_data:
+            df_stocks = pd.DataFrame(stock_data)
+            edit_cols = ['id', '종목명', '티커', '최근뉴스', '뉴스평가', '핫한뉴스선정']
+            df_edit = df_stocks[edit_cols].copy()
+            
+            edited_df = st.data_editor(
+                df_edit,
+                disabled=['id', '종목명', '티커'],
+                hide_index=True,
+                use_container_width=True,
+                height=300
+            )
+            
+            st.write("")
+            if st.button("💾 수정한 뉴스 표 내용만 일괄 덮어쓰기", use_container_width=True):
+                with st.spinner("클라우드 금고에 뉴스 업데이트 중..."):
+                    for index, row in edited_df.iterrows():
+                        sid = row['id']
+                        supabase.table("stocks").update({
+                            "최근뉴스": str(row['최근뉴스']).strip(),
+                            "뉴스평가": str(row['뉴스평가']).strip(),
+                            "핫한뉴스선정": str(row['핫한뉴스선정']).strip()
+                        }).eq("id", sid).execute()
+                    st.session_state.db_loaded = False
+                    st.success("🎉 뉴스 내용이 안전하게 저장되었습니다.")
+                    st.rerun()
 
 with tab_sys:
     st.subheader("⚙️ 시스템 마스터 제어실")
