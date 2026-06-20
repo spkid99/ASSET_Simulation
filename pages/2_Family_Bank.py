@@ -33,7 +33,7 @@ except Exception as e:
     st.error("데이터베이스 연결 오류가 발생했습니다.")
     st.stop()
 
-# --- 🔒 만기일 잠금 로직 계산 ---
+# --- 🔒 만기일 잠금 및 이자 계산 로직 ---
 is_locked = False
 today = datetime.now().date()
 
@@ -44,6 +44,11 @@ if maturity_date_str and maturity_date_str.lower() != 'nan':
             is_locked = True
     except:
         pass 
+
+# 💡 기본 이자율 설정 및 예상 수령액 자동 계산 (예: 5%)
+base_interest_rate = 5.0
+expected_interest = current_deposit * (base_interest_rate / 100)
+expected_total = current_deposit + expected_interest
 
 # --- 🖥️ 화면 UI 구성 ---
 st.title("🏦 가족 은행")
@@ -68,9 +73,15 @@ with col_top2:
         else:
             st.caption("만기일 미지정 (자유 입출금 가능)")
 
+# 💡 이자 안내 정보판 신규 추가
+with st.container(border=True):
+    st.write(f"📈 **가족 은행 기본 금리:** 연 **{base_interest_rate}%**")
+    st.markdown(f"🎁 **만기 시 예상 수령액:** <span style='color:#0083ff; font-weight:bold;'>총 {expected_total:,.0f} 원</span> (원금 + 이자 {expected_interest:,.0f}원)", unsafe_allow_html=True)
+    st.caption("※ 🏆 시상식에서 '티끌모아 태산 상'을 받으면 부모님이 특별 우대 금리를 추가로 쏴주실 수 있습니다!")
+
 st.divider()
 
-# 🎛️ 예금/출금 UI (원래의 직관적인 좌우 나란히 배치)
+# 🎛️ 예금/출금 UI
 col_in, col_out = st.columns(2)
 
 with col_in:
@@ -80,10 +91,9 @@ with col_in:
     
     if st.button("입금 확정", use_container_width=True, type="primary"):
         if current_cash >= in_amt and in_amt > 0:
-            # 💡 문법 오류 방지를 위해 한 줄로 깔끔하게 정리했습니다.
             supabase.table("balance").update({"현금잔액": current_cash - in_amt, "예금잔액": current_deposit + in_amt}).eq("사용자", current_user).execute()
             st.session_state.db_loaded = False
-            st.success(f"🎉 {in_amt:,.0f}원 예금 완료!")
+            st.success(f"🎉 {in_amt:,.0f}원 예금 완료! 만기 시 받을 이자가 늘어났습니다.")
             st.rerun()
         elif in_amt <= 0:
             st.warning("금액을 1원 이상 입력해주세요.")
@@ -101,7 +111,6 @@ with col_out:
     else:
         if st.button("출금 확정", use_container_width=True, type="primary", key="btn_out_free"):
             if current_deposit >= out_amt and out_amt > 0:
-                # 💡 마찬가지로 안정적인 일렬 코드로 전면 교정했습니다.
                 supabase.table("balance").update({"현금잔액": current_cash + out_amt, "예금잔액": current_deposit - out_amt}).eq("사용자", current_user).execute()
                 st.session_state.db_loaded = False
                 st.success(f"🎉 {out_amt:,.0f}원 출금 완료!")
