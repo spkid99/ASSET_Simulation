@@ -1,6 +1,7 @@
 import streamlit as st
 from supabase import create_client, Client
 from datetime import datetime
+import pandas as pd
 
 st.set_page_config(page_title="가족 은행", layout="centered")
 
@@ -33,7 +34,7 @@ except Exception as e:
     st.error("데이터베이스 연결 오류가 발생했습니다.")
     st.stop()
 
-# --- 🔒 만기일 잠금 및 이자 계산 로직 ---
+# --- 🔒 만기일 잠금 로직 ---
 is_locked = False
 today = datetime.now().date()
 
@@ -45,14 +46,15 @@ if maturity_date_str and maturity_date_str.lower() != 'nan':
     except:
         pass 
 
-# 💡 기본 이자율 설정 및 예상 수령액 자동 계산 (예: 5%)
-base_interest_rate = 5.0
-expected_interest = current_deposit * (base_interest_rate / 100)
+# 💡 현실 은행 방식 적용: 연이율 12% 및 1달(1개월) 만기 기준 이자 계산
+base_annual_rate = 12.0
+monthly_rate = base_annual_rate / 12.0
+expected_interest = current_deposit * (monthly_rate / 100)
 expected_total = current_deposit + expected_interest
 
 # --- 🖥️ 화면 UI 구성 ---
-st.title("🏦 가족 은행")
-st.info("안전하게 돈을 보관하고 이자를 받아보세요! (약속한 만기일 전에는 뺄 수 없습니다)")
+st.title("🏦 시드 뱅크 (1달 만기 예금)")
+st.info("안전하게 돈을 보관하고 실제 은행처럼 1달 뒤에 이자를 받아보세요! (만기일 전 출금 불가)")
 
 # 📊 자산 현황판
 col_top1, col_top2 = st.columns(2)
@@ -71,13 +73,13 @@ with col_top2:
             else:
                 st.markdown(f"🔓 **만기일:** <span style='color:#11B67A;'>{maturity_date_str} (출금 가능)</span>", unsafe_allow_html=True)
         else:
-            st.caption("만기일 미지정 (자유 입출금 가능)")
+            st.caption("만기일 미지정 (현재 입출금 자유)")
 
-# 💡 이자 안내 정보판 신규 추가
+# 💡 연이율 및 월 적용 이자 안내판
 with st.container(border=True):
-    st.write(f"📈 **가족 은행 기본 금리:** 연 **{base_interest_rate}%**")
-    st.markdown(f"🎁 **만기 시 예상 수령액:** <span style='color:#0083ff; font-weight:bold;'>총 {expected_total:,.0f} 원</span> (원금 + 이자 {expected_interest:,.0f}원)", unsafe_allow_html=True)
-    st.caption("※ 🏆 시상식에서 '티끌모아 태산 상'을 받으면 부모님이 특별 우대 금리를 추가로 쏴주실 수 있습니다!")
+    st.write(f"📈 **가족 은행 예금 금리:** 연이율 **{base_annual_rate}%** (1달 만기 시 실적용 이자율: **{monthly_rate:.0f}%**)")
+    st.markdown(f"🎁 **1달 만기 시 예상 수령액:** <span style='color:#0083ff; font-weight:bold;'>총 {expected_total:,.0f} 원</span> (원금 + 이자 {expected_interest:,.0f}원)", unsafe_allow_html=True)
+    st.caption("※ 🏆 시상식에서 '티끌모아 태산 상'을 받으면 특별 우대 금리가 추가될 수 있습니다!")
 
 st.divider()
 
