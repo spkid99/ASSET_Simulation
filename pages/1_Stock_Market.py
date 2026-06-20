@@ -23,12 +23,13 @@ def init_connection() -> Client:
     key = st.secrets["SUPABASE_KEY"]
     return create_client(url, key)
 
+supabase = init_connection()
+
 balance_data = st.session_state.balance_data
 stock_data = st.session_state.stock_data
 history_data = st.session_state.history_data
 prices_cache = st.session_state.prices
 
-# 💡 환율 안전장치: 정보가 없거나 오류가 나면 기본값 1350원으로 자동 가동
 exchange_rate = st.session_state.get('exchange_rate', 1350.0)
 if pd.isna(exchange_rate) or exchange_rate <= 0:
     exchange_rate = 1350.0
@@ -49,12 +50,11 @@ def get_owned_stocks():
         except: qty = 0.0
         if kind == '매수': owned[name] = owned.get(name, 0) + qty
         elif kind == '매도': owned[name] = owned.get(name, 0) - qty
-    return {k: round(v, 2) for k, v in owned.items() if round(v, 2) > 0}
+    return {k: round(v, 4) for k, v in owned.items() if round(v, 4) > 0}
 
 owned_stocks = get_owned_stocks()
 
 st.title("✨ 주식 시장 (투자하기)")
-# 💡 상단 정보창에 현재 적용 중인 시스템 환율을 실시간으로 명확히 노출시킵니다.
 st.info(f"👤 **{current_user}**님 ➡️ 💰 사용 가능한 현금: {current_cash:,.0f}원 | 💱 현재 적용 환율: {exchange_rate:,.2f}원")
 
 if stock_data:
@@ -73,7 +73,6 @@ if stock_data:
             news_text = str(stock.get('최근뉴스', '')).strip() 
             news_eval = str(stock.get('뉴스평가', '')).strip()
             
-            # 수파베이스 금고의 현재가를 우선 신뢰
             db_price = float(stock.get('현재가', 0)) if stock.get('현재가') else 0.0
             raw_price = db_price if db_price > 0 else prices_cache.get(ticker_symbol, 0.0)
             
@@ -96,7 +95,6 @@ if stock_data:
                 st.write(f"📊 **실시간 1주 가격:** {price_text}")
                 st.write(f"💎 **내가 가진 수량:** {my_qty}주")
                 
-                # 💡 [완벽 교정] 변수 할당 순서를 탭 글자 배열 순서와 100% 일치시켰습니다!
                 sub_buy, sub_sell, sub_chart = st.tabs(["🛒 매수하기", "💰 매도하기", "📈 차트 보기(느림주의)"])
                 
                 with sub_buy:
@@ -116,8 +114,11 @@ if stock_data:
                                     "사용자": current_user, "종목명": name, "종류": "매수", "수량": buy_qty, "가격": current_price
                                 }).execute()
                                 
-                                st.session_state.db_loaded = False 
-                                st.success("🎉 매수 성공! 홈 화면에서 확인하세요.")
+                                # 💡 [핵심 해결책] 쫓아내지 않고 그 자리에서 즉시 수파베이스 데이터를 새로고침합니다!
+                                st.session_state.balance_data = supabase.table("balance").select("*").execute().data
+                                st.session_state.history_data = supabase.table("history").select("*").execute().data
+                                
+                                st.success("🎉 매수 성공! 현금과 주식 수량이 즉시 업데이트되었습니다.")
                                 st.rerun()
                             else: st.error("❌ 현금이 부족해요!")
 
@@ -138,8 +139,11 @@ if stock_data:
                                     "사용자": current_user, "종목명": name, "종류": "매도", "수량": sell_qty, "가격": current_price
                                 }).execute()
                                 
-                                st.session_state.db_loaded = False
-                                st.success("🎉 매도 성공! 현금이 들어왔습니다.")
+                                # 💡 [핵심 해결책] 쫓아내지 않고 그 자리에서 즉시 수파베이스 데이터를 새로고침합니다!
+                                st.session_state.balance_data = supabase.table("balance").select("*").execute().data
+                                st.session_state.history_data = supabase.table("history").select("*").execute().data
+                                
+                                st.success("🎉 매도 성공! 지갑에 현금이 즉시 입금되었습니다.")
                                 st.rerun()
                             else: st.error("❌ 주식이 부족합니다.")
                             
