@@ -29,6 +29,7 @@ balance_data = st.session_state.balance_data
 stock_data = st.session_state.stock_data
 history_data = st.session_state.history_data
 prices_cache = st.session_state.prices
+prices_1m_cache = st.session_state.get('prices_1m_ago', {})
 
 exchange_rate = st.session_state.get('exchange_rate', 1350.0)
 if pd.isna(exchange_rate) or exchange_rate <= 0:
@@ -60,11 +61,68 @@ st.info(f"👤 **{current_user}**님 ➡️ 💰 사용 가능한 현금: {curre
 if stock_data:
     categories = list(set([str(stock.get('카테고리', '기타')).strip() for stock in stock_data]))
     categories.sort() 
-    cat_tabs = st.tabs(categories)
     
+    # 💡 [핵심 구현] 기존 카테고리 리스트 제일 앞에 요약판 탭 명칭 결합!
+    tabs_list = ["📊 종목별 1달 전 대비 수익률 요약"] + categories
+    cat_tabs = st.tabs(tabs_list)
+    
+    # ------------------ 💡 탭 0 : 대망의 전 종목 수익률 요약판 ------------------
+    with cat_tabs[0]:
+        st.subheader("📊 주식 종목별 최근 1달간의 상승/하락 현황")
+        st.caption("가장 최근에 시장에서 힘이 강했던 종목이 무엇인지 한눈에 트렌드를 비교해 보세요.")
+        
+        summary_rows = []
+        for stock in stock_data:
+            name = str(stock.get('종목명', '')).strip()
+            ticker = str(stock.get('티커', '')).strip()
+            is_korean = ticker.endswith('.KS') or ticker.endswith('.KQ')
+            
+            db_price = float(stock.get('현재가', 0)) if stock.get('현재가') else 0.0
+            price_now = db_price if db_price > 0 else prices_cache.get(ticker, 0.0)
+            
+            db_price_1m = float(stock.get('한달전주가', 0)) if stock.get('한달전주가') else 0.0
+            price_1m = db_price_1m if db_price_1m > 0 else prices_1m_cache.get(ticker, 0.0)
+            
+            if price_now > 0 and price_1m > 0:
+                ret_rate = ((price_now - price_1m) / price_1m) * 100
+                
+                # 원화 환산 가격 계산
+                won_price_now = price_now if is_korean else price_now * exchange_rate
+                won_price_1m = price_1m if is_korean else price_1m * exchange_rate
+                
+                summary_rows.append({
+                    "종목명": name,
+                    "티커": ticker,
+                    "1달 전 주가(원)": round(won_price_1m),
+                    "현재 주가(원)": round(won_price_now),
+                    "최근 1달 수익률": round(ret_rate, 2)
+                })
+        
+        if summary_rows:
+            df_sum = pd.DataFrame(summary_rows)
+            # 수익률이 가장 높은 대장주 순서대로 보기 좋게 내림차순 정렬
+            df_sum = df_sum.sort_values(by="최근 1달 수익률", ascending=False)
+            
+            try:
+                def style_1m_profit(val):
+                    return f"color: {'#ff4b4b' if val > 0 else '#0083ff' if val < 0 else 'black'}; font-weight: bold;"
+                
+                styled_sum = df_sum.style.format({
+                    '1달 전 주가(원)': '{:,.0f}', 
+                    '현재 주가(원)': '{:,.0f}', 
+                    '최근 1달 수익률': '{:+.2f}%'
+                }).map(style_1m_profit, subset=['최근 1달 수익률'])
+                
+                st.dataframe(styled_sum, hide_index=True, use_container_width=True)
+            except:
+                st.dataframe(df_sum, hide_index=True, use_container_width=True)
+        else:
+            st.info("비교 분석할 수 있는 주가 정보가 없습니다. 관리자 모드에서 주가 동기화를 실행해 주세요.")
+            
+    # ------------------ 기존 카테고리별 주식 상세 매수/매도 탭 ------------------
     for stock in stock_data:
         cat = str(stock.get('카테고리', '기타')).strip()
-        tab_index = categories.index(cat)
+        tab_index = categories.index(cat) + 1 # 첫 번째 탭이 요약판이므로 인덱스를 +1 시켜줍니다.
         
         with cat_tabs[tab_index]:
             ticker_symbol = str(stock.get('티커', '')).strip()
@@ -114,7 +172,6 @@ if stock_data:
                                     "사용자": current_user, "종목명": name, "종류": "매수", "수량": buy_qty, "가격": current_price
                                 }).execute()
                                 
-                                # 💡 [핵심 해결책] 쫓아내지 않고 그 자리에서 즉시 수파베이스 데이터를 새로고침합니다!
                                 st.session_state.balance_data = supabase.table("balance").select("*").execute().data
                                 st.session_state.history_data = supabase.table("history").select("*").execute().data
                                 
@@ -139,7 +196,6 @@ if stock_data:
                                     "사용자": current_user, "종목명": name, "종류": "매도", "수량": sell_qty, "가격": current_price
                                 }).execute()
                                 
-                                # 💡 [핵심 해결책] 쫓아내지 않고 그 자리에서 즉시 수파베이스 데이터를 새로고침합니다!
                                 st.session_state.balance_data = supabase.table("balance").select("*").execute().data
                                 st.session_state.history_data = supabase.table("history").select("*").execute().data
                                 
