@@ -37,7 +37,6 @@ users_list = [str(r.get('사용자', '')).strip() for r in balance_data if r.get
 settings_dict = {r.get('key'): r.get('value') for r in settings_data}
 current_db_rate = float(settings_dict.get('exchange_rate', '1385.0'))
 
-# 💡 탭 이름을 '종목 마스터 관리'로 더욱 직관적으로 변경했습니다.
 tab_money, tab_user, tab_shop, tab_stock_manage, tab_sys = st.tabs([
     "💰 용돈 지급", "👤 유저 관리", "📦 상점 물류", "📦 종목 마스터 관리", "⚙️ 시스템 제어"
 ])
@@ -57,7 +56,7 @@ with tab_money:
                 st.rerun()
 
 with tab_user:
-    st.subheader("👤  참가자 이름 변경 및 삭제")
+    st.subheader("👤 참가자 이름 변경 및 삭제")
     if users_list:
         with st.form("rename_form"):
             st.write("✏️ **유저 이름 일괄 변경**")
@@ -111,82 +110,65 @@ with tab_shop:
                             st.rerun()
                     else: st.button("✅ 처리완료", disabled=True, key=f"done_{p_id}", use_container_width=True)
 
-# 💡 [집중 구현] 엑셀 대량 붙여넣기 기능 및 단건 편집 통합 제어실
 with tab_stock_manage:
     sub_tab1, sub_tab2 = st.tabs(["📋 엑셀 통째로 붙여넣기 (종목 리스트 리셋)", "✏️ 개별 뉴스/태그 간편 수정"])
     
     with sub_tab1:
         st.subheader("🚀 주식 종목 리스트 엑셀 일괄 교체 시스템")
-        st.warning("⚠️ 주의: 여기에 데이터를 붙여넣고 실행하면 기존 수파베이스의 종목 리스트가 전체 삭제된 후 새 리스트로 완벽히 교체됩니다! (현재가는 우선 전부 0원으로 초기화됩니다)")
+        st.warning("⚠️ 주의: 리스트 전체 교체 시 최초 1회는 시스템 제어 탭에서 가격 동기화를 꼭 시켜주셔야 1달 전 주가와 현재가가 채워집니다.")
         
-        # 안내 가이드 텍스트
         st.markdown("""
-        **구글 시트나 엑셀에서 아래 7개 열(헤더 이름 포함)을 드래그하여 복사(Ctrl+C)한 후 아래 상자에 붙여넣으세요(Ctrl+V).**
+        **구글 시트나 엑셀에서 아래 7개 열을 드래그하여 복사(Ctrl+C) 후 아래 상자에 붙여넣으세요.**
         `카테고리`	`종목명`	`티커`	`설명`	`최근뉴스`	`핫한뉴스선정`	`뉴스평가`
         """)
         
-        pasted_text = st.text_area("엑셀에서 복사한 테이블 데이터를 여기에 붙여넣으세요.", height=250, placeholder="카테고리\t종목명\t티커\t설명\t최근뉴스\t핫한뉴스선정\t뉴스평가\n미국주식\t테슬라\tTSLA\t전기차 제조사\t일론머스크 신제품 발표\tO\t호재")
+        pasted_text = st.text_area("엑셀에서 복사한 테이블 데이터를 여기에 붙여넣으세요.", height=200)
         
         if st.button("🔥 위 데이터로 수파베이스 종목 전체 리셋 및 교체 실행", type="primary", use_container_width=True):
             if not pasted_text.strip():
                 st.error("❌ 붙여넣은 텍스트 데이터가 없습니다.")
             else:
                 try:
-                    # 엑셀/구글시트의 복사 데이터는 탭(\t)으로 구분된 TSV 문자열입니다.
                     df_pasted = pd.read_csv(io.StringIO(pasted_text.strip()), sep='\t')
-                    
                     required_cols = ['카테고리', '종목명', '티커', '설명', '최근뉴스', '핫한뉴스선정', '뉴스평가']
                     missing_cols = [c for c in required_cols if c not in df_pasted.columns]
                     
                     if missing_cols:
-                        st.error(f"❌ 헤더(열 이름)가 일치하지 않습니다. 필수 기입 헤더: {missing_cols}")
+                        st.error(f"❌ 필수 기입 헤더 누락: {missing_cols}")
                     else:
-                        with st.spinner("수파베이스 클라우드 금고 비우는 중..."):
-                            # 기존 stocks 테이블의 모든 데이터 영구 삭제
-                            supabase.table("stocks").delete().neq("id", -1).execute()
-                        
-                        with st.spinner("새로운 엑셀 종목 대량 주입 중 (현재가 0 세팅)..."):
-                            insert_rows = []
-                            for _, row in df_pasted.iterrows():
-                                insert_rows.append({
-                                    "카테고리": str(row['카테고리']).strip(),
-                                    "종목명": str(row['종목명']).strip(),
-                                    "티커": str(row['티커']).strip(),
-                                    "설명": str(row['설명']).strip(),
-                                    "최근뉴스": str(row['최근뉴스']).strip() if pd.notna(row['최근뉴스']) else "",
-                                    "핫한뉴스선정": str(row['핫한뉴스선정']).strip() if pd.notna(row['핫한뉴스선정']) else "",
-                                    "뉴스평가": str(row['뉴스평가']).strip() if pd.notna(row['뉴스평가']) else "",
-                                    "현재가": 0.0 # 🎯 요청하신 대로 최초 현재가는 전부 0원으로 깨끗하게 세팅!
-                                })
-                            
-                            if insert_rows:
-                                supabase.table("stocks").insert(insert_rows).execute()
-                        
+                        supabase.table("stocks").delete().neq("id", -1).execute()
+                        insert_rows = []
+                        for _, row in df_pasted.iterrows():
+                            insert_rows.append({
+                                "카테고리": str(row['카테고리']).strip(),
+                                "종목명": str(row['종목명']).strip(),
+                                "티커": str(row['티커']).strip(),
+                                "설명": str(row['설명']).strip(),
+                                "최근뉴스": str(row['최근뉴스']).strip() if pd.notna(row['최근뉴스']) else "",
+                                "핫한뉴스선정": str(row['핫한뉴스선정']).strip() if pd.notna(row['핫한뉴스선정']) else "",
+                                "뉴스평가": str(row['뉴스평가']).strip() if pd.notna(row['뉴스평가']) else "",
+                                "현재가": 0.0,
+                                "한달전주가": 0.0
+                            })
+                        if insert_rows:
+                            supabase.table("stocks").insert(insert_rows).execute()
                         st.session_state.db_loaded = False
-                        st.success("🎉 종목 리스트가 성공적으로 리셋 및 전체 교체되었습니다! 다음 탭에서 실시간 주가를 한 번 동기화해 주세요.")
+                        st.success("🎉 종목 리스트 일괄 리셋 성공!")
                         st.rerun()
                 except Exception as ex:
-                    st.error(f"❌ 데이터 파싱 중 오류가 발생했습니다. 행/열 배치를 확인해 주세요. 오류 내용: {ex}")
+                    st.error(f"❌ 에러 발생: {ex}")
                     
     with sub_tab2:
         st.subheader("📰 구글 시트형 뉴스/태그 간편 편집기")
-        st.caption("주가를 0원으로 초기화하지 않고, 기존 종목들의 최근 뉴스와 아이콘 태그만 엑셀처럼 빠르게 수정할 때 사용합니다.")
         if stock_data:
             df_stocks = pd.DataFrame(stock_data)
             edit_cols = ['id', '종목명', '티커', '최근뉴스', '뉴스평가', '핫한뉴스선정']
             df_edit = df_stocks[edit_cols].copy()
             
-            edited_df = st.data_editor(
-                df_edit,
-                disabled=['id', '종목명', '티커'],
-                hide_index=True,
-                use_container_width=True,
-                height=300
-            )
+            edited_df = st.data_editor(df_edit, disabled=['id', '종목명', '티커'], hide_index=True, use_container_width=True, height=250)
             
-            st.write("")
             if st.button("💾 수정한 뉴스 표 내용만 일괄 덮어쓰기", use_container_width=True):
-                with st.spinner("클라우드 금고에 뉴스 업데이트 중..."):
+                with st.spinner("뉴스 업데이트 중..."):
                     for index, row in edited_df.iterrows():
                         sid = row['id']
                         supabase.table("stocks").update({
@@ -195,7 +177,7 @@ with tab_stock_manage:
                             "핫한뉴스선정": str(row['핫한뉴스선정']).strip()
                         }).eq("id", sid).execute()
                     st.session_state.db_loaded = False
-                    st.success("🎉 뉴스 내용이 안전하게 저장되었습니다.")
+                    st.success("🎉 뉴스 내용 저장 완료.")
                     st.rerun()
 
 with tab_sys:
@@ -204,18 +186,18 @@ with tab_sys:
     with st.container(border=True):
         st.write("💵 **[부모님 전용] 현재 고정 환율 제어**")
         st.write(f"현재 데이터베이스에 기록된 기준 환율: **{current_db_rate:,.2f} 원**")
-        custom_rate = st.number_input("아이들 앱에 수동으로 강제 지정할 환율 입력 (원)", min_value=1000.0, max_value=2000.0, value=current_db_rate, step=1.0)
+        custom_rate = st.number_input("환율 입력 (원)", min_value=1000.0, max_value=2000.0, value=current_db_rate, step=1.0)
         
         if st.button("💱 입력한 환율로 금고 강제 세팅", use_container_width=True):
             supabase.table("system_settings").update({"value": str(custom_rate)}).eq("key", "exchange_rate").execute()
             st.session_state.db_loaded = False
-            st.success(f"🎯 환율이 {custom_rate:,.1f}원으로 강제 고정되었습니다. 홈 화면을 새로고침 하세요!")
+            st.success(f"🎯 환율 고정 세팅 성공!")
             st.rerun()
 
     st.write("---")
     st.write("📈 **인터넷 실시간 주가 및 환율 강제 수집기**")
     if st.button("🔄 지금 즉시 인터넷 동기화 및 전 종목 현재가/환율 저장", use_container_width=True):
-        with st.spinner("보안 검문소를 우회하여 최신 자산 데이터 수집 중..."):
+        with st.spinner("보안 검문소를 우회하여 최근 2달 주가 히스토리 추적 및 일괄 동기화 중..."):
             
             session = requests.Session()
             session.headers.update({
@@ -232,18 +214,23 @@ with tab_sys:
                 
                 if ticker:
                     try:
+                        # 💡 동기화 시 1달 전 가격도 함께 추적하도록 확장!
                         t = yf.Ticker(ticker, session=session)
-                        val = 0.0
-                        try: val = float(t.fast_info['last_price'])
-                        except:
-                            hist = t.history(period="1d")
-                            if not hist.empty: val = float(hist['Close'].iloc[-1])
-                                
-                        if val > 0:
-                            supabase.table("stocks").update({"현재가": val}).eq("id", sid).execute()
-                            success_logs.append(f"✅ {name} ({ticker}): {val:,.2f} 원격 저장 완료")
-                        else: fail_logs.append(f"❌ {name} ({ticker}): 주가 데이터 수신 실패")
-                    except Exception as e: fail_logs.append(f"❌ {name} ({ticker}): 통신 지연 ({str(e)})")
+                        hist = t.history(period="2mo")
+                        
+                        if not hist.empty:
+                            val_now = float(hist['Close'].iloc[-1])
+                            val_1m = float(hist['Close'].iloc[-22]) if len(hist) >= 22 else float(hist['Close'].iloc[0])
+                            
+                            if val_now > 0 and val_1m > 0:
+                                supabase.table("stocks").update({"현재가": val_now, "한달전주가": val_1m}).eq("id", sid).execute()
+                                success_logs.append(f"✅ {name} ({ticker}): 현재가 {val_now:,.2f} / 1달전 {val_1m:,.2f} 동기화")
+                            else:
+                                fail_logs.append(f"❌ {name} ({ticker}): 값이 0 이하로 파싱됨")
+                        else:
+                            fail_logs.append(f"❌ {name} ({ticker}): 주가 내역 비어있음")
+                    except Exception as e: 
+                        fail_logs.append(f"❌ {name} ({ticker}): 오류 ({str(e)})")
             
             try:
                 response = requests.get("https://open.er-api.com/v6/latest/USD")
@@ -252,17 +239,17 @@ with tab_sys:
                     rate = float(exchange_data["rates"]["KRW"])
                     if rate > 1000:
                         supabase.table("system_settings").update({"value": str(rate)}).eq("key", "exchange_rate").execute()
-                        success_logs.append(f"✅ 환율 공인 오픈 API 실시간 수집 성공: {rate:,.2f}원")
+                        success_logs.append(f"✅ 환율 실시간 자동 수집 성공: {rate:,.2f}원")
             except Exception as e: 
-                fail_logs.append(f"❌ 환율 수집 통신 오류 (기존 금고 환율 유지)")
+                fail_logs.append(f"❌ 환율 수집 오류")
             
             today_date = datetime.now().strftime("%Y-%m-%d")
             supabase.table("system_settings").update({"value": today_date}).eq("key", "last_stock_update").execute()
             st.session_state.db_loaded = False
             
             if success_logs:
-                st.success("🎉 실시간 자산 정보 동기화가 완료되었습니다!")
+                st.success("🎉 최근 1달간의 전 종목 데이터 동기화 완료!")
                 for log in success_logs: st.write(log)
             if fail_logs:
-                st.error("🚨 아래 항목들은 가져오지 못했습니다.")
+                st.error("🚨 수집 실패 리스트:")
                 for log in fail_logs: st.write(log)
