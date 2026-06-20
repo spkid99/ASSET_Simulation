@@ -77,7 +77,7 @@ with col_top2:
 
 # 💡 연이율 및 월 적용 이자 안내판
 with st.container(border=True):
-    st.write(f"📈 **가족 은행 예금 금리:** 연이율 **{base_annual_rate}%** (1달 만기 시 실적용 이자율: **{monthly_rate:.0f}%**)")
+    st.write(f"📈 **시드 뱅크 예금 금리:** 연이율 **{base_annual_rate}%** (1달 만기 시 실적용 이자율: **{monthly_rate:.0f}%**)")
     st.markdown(f"🎁 **1달 만기 시 예상 수령액:** <span style='color:#0083ff; font-weight:bold;'>총 {expected_total:,.0f} 원</span> (원금 + 이자 {expected_interest:,.0f}원)", unsafe_allow_html=True)
     st.caption("※ 🏆 시상식에서 '티끌모아 태산 상'을 받으면 특별 우대 금리가 추가될 수 있습니다!")
 
