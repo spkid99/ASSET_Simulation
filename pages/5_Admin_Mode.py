@@ -9,7 +9,7 @@ st.set_page_config(page_title="부모님 전용 관리자 모드", layout="wide"
 
 st.title("⚙️ 부모님 전용 관리자 모드")
 pwd = st.text_input("관리자 비밀번호를 입력하세요", type="password")
-if pwd != "4814":
+if pwd != "0000":
     st.warning("🔒 올바른 관리자 비밀번호를 입력해야 제어 장치가 활성화됩니다.")
     st.stop()
 
@@ -36,7 +36,8 @@ users_list = [str(r.get('사용자', '')).strip() for r in balance_data if r.get
 settings_dict = {r.get('key'): r.get('value') for r in settings_data}
 current_db_rate = float(settings_dict.get('exchange_rate', '1385.0'))
 
-tab_money, tab_user, tab_shop, tab_sys = st.tabs(["💰 용돈 지급", "👤 유저 관리", "📦 상점 물류", "⚙️ 시스템 마스터 제어"])
+# 💡 [새로운 탭 추가] 엑셀형 뉴스 일괄 편집 탭 생성
+tab_money, tab_user, tab_shop, tab_news, tab_sys = st.tabs(["💰 용돈 지급", "👤 유저 관리", "📦 상점 물류", "📰 주식/뉴스 일괄 편집", "⚙️ 시스템 제어"])
 
 with tab_money:
     st.subheader("🎁 자산 강제 주입 (보너스 지급)")
@@ -107,6 +108,42 @@ with tab_shop:
                             st.rerun()
                     else: st.button("✅ 처리완료", disabled=True, key=f"done_{p_id}", use_container_width=True)
 
+# 💡 [핵심 기능] 엑셀처럼 표에서 바로 글자를 치거나 복사/붙여넣기 할 수 있는 마법의 공간!
+with tab_news:
+    st.subheader("📰 구글 시트형 뉴스 일괄 편집기")
+    st.info("💡 **사용 꿀팁:** 구글 시트나 엑셀에서 내용 여러 줄을 복사(Ctrl+C)한 뒤, 아래 표의 빈칸을 한 번 클릭하고 **붙여넣기(Ctrl+V)** 하시면 한꺼번에 쏙 들어갑니다!")
+    
+    if stock_data:
+        df_stocks = pd.DataFrame(stock_data)
+        
+        # 편집하기 쉽게 순서를 정렬하고 필요한 칸만 남깁니다.
+        edit_cols = ['id', '종목명', '티커', '최근뉴스', '뉴스평가', '핫한뉴스선정']
+        df_edit = df_stocks[edit_cols].copy()
+        
+        # Streamlit의 강력한 data_editor 기능 활용 (마치 엑셀처럼 작동합니다)
+        edited_df = st.data_editor(
+            df_edit,
+            disabled=['id', '종목명', '티커'], # 이 세 칸은 실수로 건드리지 못하게 잠금!
+            hide_index=True,
+            use_container_width=True,
+            height=400
+        )
+        
+        st.write("")
+        if st.button("💾 위에서 수정한 표 내용 전체 수파베이스에 일괄 덮어쓰기", type="primary", use_container_width=True):
+            with st.spinner("클라우드 금고에 일괄 업데이트 중..."):
+                for index, row in edited_df.iterrows():
+                    sid = row['id']
+                    supabase.table("stocks").update({
+                        "최근뉴스": str(row['최근뉴스']).strip(),
+                        "뉴스평가": str(row['뉴스평가']).strip(),
+                        "핫한뉴스선정": str(row['핫한뉴스선정']).strip()
+                    }).eq("id", sid).execute()
+                
+                st.session_state.db_loaded = False
+                st.success("🎉 모든 뉴스가 성공적으로 일괄 업데이트 되었습니다! 홈 화면을 확인해 보세요.")
+                st.rerun()
+
 with tab_sys:
     st.subheader("⚙️ 시스템 마스터 제어실")
     
@@ -154,7 +191,6 @@ with tab_sys:
                         else: fail_logs.append(f"❌ {name} ({ticker}): 주가 데이터 수신 실패")
                     except Exception as e: fail_logs.append(f"❌ {name} ({ticker}): 통신 지연 ({str(e)})")
             
-            # 💡 버튼 클릭 시에도 공인 환율 API를 통해 완벽하게 최신 환율 강제 자동 수집
             try:
                 response = requests.get("https://open.er-api.com/v6/latest/USD")
                 if response.status_code == 200:
