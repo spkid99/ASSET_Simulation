@@ -1,20 +1,18 @@
 import streamlit as st
 from supabase import create_client, Client
-import yfinance as yf
 import pandas as pd
 from datetime import datetime
-import requests
 
 st.set_page_config(page_title="자산관리 시뮬레이션", layout="centered")
 
-if "db_loaded" not in st.session_state:
-    st.session_state.db_loaded = False
-    st.session_state.balance_data = []
-    st.session_state.history_data = []
-    st.session_state.stock_data = []
-    st.session_state.prices = {}
-    st.session_state.prices_1m_ago = {}
-    st.session_state.exchange_rate = 1385.0
+# 💡 세션 상태(메모리) 완벽 초기화 (에러 원천 차단)
+if "db_loaded" not in st.session_state: st.session_state.db_loaded = False
+if "balance_data" not in st.session_state: st.session_state.balance_data = []
+if "history_data" not in st.session_state: st.session_state.history_data = []
+if "stock_data" not in st.session_state: st.session_state.stock_data = []
+if "prices" not in st.session_state: st.session_state.prices = {}
+if "prices_1m_ago" not in st.session_state: st.session_state.prices_1m_ago = {}
+if "exchange_rate" not in st.session_state: st.session_state.exchange_rate = 1385.0
 
 @st.cache_resource(ttl=3600)
 def init_connection() -> Client:
@@ -26,57 +24,14 @@ def load_all_data_to_ram():
     try:
         supabase = init_connection()
         
+        # 💡 야후 통신 완전 삭제! 부모님이 세팅한 수파베이스 금고 데이터만 0.1초만에 읽어옵니다.
         st.session_state.balance_data = supabase.table("balance").select("*").execute().data
         st.session_state.history_data = supabase.table("history").select("*").execute().data
         st.session_state.stock_data = supabase.table("stocks").select("*").execute().data
-        
-        today_date = datetime.now().strftime("%Y-%m-%d")
         settings_res = supabase.table("system_settings").select("*").execute().data
         
         settings_dict = {r.get('key'): r.get('value') for r in settings_res}
-        last_update = settings_dict.get('last_stock_update', '2000-01-01')
         
-        if last_update != today_date:
-            session = requests.Session()
-            session.headers.update({
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-            })
-            
-            for stock in st.session_state.stock_data:
-                ticker = str(stock.get('티커', '')).strip()
-                sid = stock.get('id')
-                if ticker:
-                    try:
-                        # 💡 1달 전 데이터를 추출하기 위해 2달치 역사 데이터 수집
-                        t = yf.Ticker(ticker, session=session)
-                        hist = t.history(period="2mo")
-                        
-                        if not hist.empty:
-                            val_now = float(hist['Close'].iloc[-1])
-                            # 주식 시장 개장일 기준 약 22일 전이 한 달 전입니다.
-                            val_1m = float(hist['Close'].iloc[-22]) if len(hist) >= 22 else float(hist['Close'].iloc[0])
-                            
-                            if val_now > 0 and val_1m > 0:
-                                supabase.table("stocks").update({"현재가": val_now, "한달전주가": val_1m}).eq("id", sid).execute()
-                                stock['현재가'] = val_now
-                                stock['한달전주가'] = val_1m
-                    except:
-                        pass
-            
-            try:
-                response = requests.get("https://open.er-api.com/v6/latest/USD")
-                if response.status_code == 200:
-                    exchange_data = response.json()
-                    rate = float(exchange_data["rates"]["KRW"])
-                    if rate > 1000:
-                        supabase.table("system_settings").update({"value": str(rate)}).eq("key", "exchange_rate").execute()
-                        settings_dict['exchange_rate'] = str(rate)
-            except:
-                pass
-                
-            supabase.table("system_settings").update({"value": today_date}).eq("key", "last_stock_update").execute()
-            st.session_state.stock_data = supabase.table("stocks").select("*").execute().data
-
         db_rate = settings_dict.get('exchange_rate', '1385.0')
         st.session_state.exchange_rate = float(db_rate)
 
@@ -230,7 +185,7 @@ if hot_news:
     for name, news, icon in hot_news[:5]: st.info(f"**[{name}]** {icon} {news}")
     st.divider()
 
-st.metric(label=f"💰 시작 원금: {initial_capital:,.0f} 원 (오늘의 자동 고정 환율: {exchange_rate:,.1f}원 적용)", value=f"{total_asset_value:,.0f} 원", delta=f"총 {total_profit_amt:,.0f} 원 ({total_profit_rate:,.2f}%) 수익")
+st.metric(label=f"💰 시작 원금: {initial_capital:,.0f} 원 (오늘의 환율: {exchange_rate:,.1f}원 적용)", value=f"{total_asset_value:,.0f} 원", delta=f"총 {total_profit_amt:,.0f} 원 ({total_profit_rate:,.2f}%) 수익")
 st.divider()
 
 col1, col2, col3 = st.columns(3)
@@ -256,4 +211,7 @@ else:
     st.info("아직 보유한 주식이 없어요. 투자를 시작해 보세요!")
 
 st.divider()
-st.caption(f"💡 오늘 가장 먼저 접속한 가족에 의해 주가와 환율이 하루 1회 자동으로 안전하게 수집 및 고정 관리됩니다.")
+st.caption(f"💡 앱의 모든 실시간 주가와 환율은 부모님(관리자 모드)의 통제하에 안정적으로 연동됩니다.")
+if st.button("🔄 내 자산 새로고침", use_container_width=True):
+    st.session_state.db_loaded = False
+    st.rerun()
